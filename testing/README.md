@@ -1,6 +1,6 @@
 # Examples of using the `fuzzyspark` package
 
-Simple project to test our functions.
+Simple project to test the algorithms developed in the package.
 
 ## Compiling and running
 
@@ -12,6 +12,7 @@ Since the `fuzzyspark` package is not yet published, there are two ways of packa
 libraryDependencies ++= Seq(
   ...,
   "com.github.antcc" %% "fuzzyspark" % "1.0"
+)
 ```
 
 2. Packaging it into a JAR file and adding it as an unmanaged dependency in a `lib` folder.
