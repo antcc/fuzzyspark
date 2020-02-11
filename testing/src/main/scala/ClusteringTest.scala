@@ -30,9 +30,7 @@ object ClusteringTest {
 
   /** Configuration parameters. */
   val hdfs = false
-  val numNodes = 1
-  val numCores = 4
-  val numPartitions = numNodes * (numCores - 1)
+  val numPartitions = 4
   val saveFile = false
   val outFile = "output/centers_norm.txt"
 
@@ -59,6 +57,7 @@ object ClusteringTest {
 
   /** Clustering example with Fuzzy C Means. */
   def main(args: Array[String]) = {
+    // Spark environment configuration
     val conf = new SparkConf().setAppName("FCMClusteringTest")
     val sc = new SparkContext(conf)
 
@@ -76,10 +75,22 @@ object ClusteringTest {
         Vectors.dense(line.split(",").map ( _.toDouble ))
     }.cache()
 
+    // Test Chiu Global
+    /**val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
+    val centers = chiu.chiuGlobal(data)
+    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")*/
+
+    // Test Chiu Local
+    val centers2 = data.mapPartitionsWithIndex ( chiu.chiuLocal )
+      .map ( _._2 )
+      .collect()
+      .toArray
+    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+
     // Train a FCM model on the data using initial centers from Chiu
-    val fcmModel = FuzzyCMeans.train(
+    /**val fcmModel = FuzzyCMeans.train(
       data,
-      initMode = FuzzyCMeans.CHIU_LOCAL,
+      initMode = FuzzyCMeans.CHIU_GLOBAL,
       chiuInstance = Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions))
     )
 
@@ -91,7 +102,7 @@ object ClusteringTest {
       printToFile(outFile, centersToString(fcmModel.clusterCenters))
     else
       println("--> CLUSTER CENTERS:\n" +
-        fcmModel.clusterCenters.map ( _.toString ).mkString("\n"))
+        fcmModel.clusterCenters.map ( _.toString ).mkString("\n"))*/
 
     // Stop spark
     sc.stop()

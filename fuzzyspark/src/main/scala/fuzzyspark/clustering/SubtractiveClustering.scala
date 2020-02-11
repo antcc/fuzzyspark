@@ -21,9 +21,18 @@ package fuzzyspark.clustering
 
 import scala.math.{exp, pow, sqrt}
 
+import org.apache.spark.HashPartitioner
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
 
+/**
+ * Implementation of Chiu's fuzzy subtractive clustering
+ * algorithm [1] for computing initial cluster centers.
+ *
+ * [1] Chiu, S. L. (1994). Fuzzy model identification based on
+ *     cluster estimation. Journal of Intelligent & fuzzy systems,
+ *     2(3), 267-278.
+ */
 class SubtractiveClustering(
   private var ra: Double,
   var lowerBound: Double,
@@ -38,10 +47,9 @@ class SubtractiveClustering(
 
   /**
    * Construct object with default parameters:
-   *   { ra = 0.3, lowerBound = 0.15, upperBound = 0.5,
-   *     numPartitions = 8 }
+   *   { ra = 0.3, lowerBound = 0.15, upperBound = 0.5 }
    */
-  def this() = this(0.3, 0.15, 0.5, 8)
+  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions)
 
   /** Neighbourhood radius. */
   def getRadius: Double = ra
@@ -63,38 +71,36 @@ class SubtractiveClustering(
    * subtractive clustering algorithm.
    */
   def chiuGlobal(data: RDD[Vector]): Array[Vector] = {
+    val sc = data.sparkContext
     val numPoints = data.count()
     var centers = List[Vector]()
 
     // Compute initial potential
-    val pairs = data.cartesian(data)
-    var potential = pairs.map { case (a,b) =>
-      (a, math.exp(-alpha * Vectors.sqdist(a, b)))
-    }.reduceByKey ( _ + _ ).cache()
+    var potential: RDD[(Vector, Double)] = initPotential(data)
 
-    var chosenTuple = potential.max()(Ordering[Double].on ( x => x._2 ))
+    // Compute initial center
+    var chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
     var chosenCenter = chosenTuple._1
-    var firstCenterPotential, chosenPotential = chosenTuple._2
-
-    // First center
+    var chosenPotential = chosenTuple._2
+    val firstCenterPotential = chosenTuple._2
     centers = chosenCenter :: centers
 
+    // Main loop of the algorithm
     var stop = false
-    var test = true
     while (!stop) {
       // Revise potential of points
-      potential = potential.map { case (a,b) =>
-        (a, b - chosenPotential *
-          math.exp(-beta * Vectors.sqdist(a, chosenCenter)))
+      potential = potential.map { case (x, p) =>
+        (x, p - chosenPotential *
+          exp(-beta * Vectors.sqdist(x, chosenCenter)))
       }.cache()
 
       // Find new center
-      chosenTuple = potential.max()(Ordering[Double].on ( x => x._2 ))
+      chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
       chosenCenter = chosenTuple._1
       chosenPotential = chosenTuple._2
-      test = true
 
       // Check stopping condition
+      var test = true
       while (test) {
         // Accept and continue
         if (chosenPotential > upperBound * firstCenterPotential) {
@@ -110,8 +116,8 @@ class SubtractiveClustering(
         }
         // Gray zone
         else {
-          var dmin = centers.map { x =>
-            sqrt(Vectors.sqdist(chosenCenter, x))
+          var dmin = centers.map { c =>
+            sqrt(Vectors.sqdist(chosenCenter, c))
           }.reduceLeft ( _ min _ )
 
           // Accept and continue
@@ -121,15 +127,14 @@ class SubtractiveClustering(
             if (centers.length >= numPoints)
               stop = true
           }
-
           // Reject and re-test
           else {
-            potential = potential.map { case (a,b) =>
-              (a, if (a == chosenCenter) 0.0 else b)
+            potential = potential.map { case (x, p) =>
+              (x, if (x == chosenCenter) 0.0 else p)
             }.cache()
 
             // Find new center
-            chosenTuple = potential.max()(Ordering[Double].on ( x => x._2 ))
+            chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
             chosenCenter = chosenTuple._1
             chosenPotential = chosenTuple._2
           }
@@ -151,83 +156,82 @@ class SubtractiveClustering(
    * cluster centers together with the index of the partition.
    */
   def chiuLocal(index: Int, it: Iterator[Vector]): Iterator[(Int, Vector)] = {
-    var centersWithIndex = List[(Int, Vector)]()
+    var centersIndexed = List[(Int, Vector)]()
     var potential = List[(Vector, Double)]()
     var numPoints = 0
     var (it1, it2) = it.duplicate
 
+    // Compute initial potential
     while (it1.hasNext) {
       var dup = it2.duplicate
       it2 = dup._1
       var it3 = dup._2
-      var cur = it1.next
-      var dist = 0.0
+      var curr = it1.next
 
+      // Get distance from current point to every point
+      var dist = 0.0
       while(it3.hasNext) {
         var aux: Vector = it3.next
-        dist = dist + math.exp(-alpha * Vectors.sqdist(cur, aux))
+        dist += exp(-alpha * Vectors.sqdist(curr, aux))
       }
 
-      potential = (cur, dist) :: potential
+      // Add potential of current point
+      potential = (curr, dist) :: potential
       numPoints = numPoints + 1
     }
 
-    var chosenTuple = potential.maxBy { _._2 }
+    // Compute initial center
+    var chosenTuple = potential.maxBy ( _._2 )
     var chosenCenter = chosenTuple._1
-    var firstCenterPotential, chosenPotential = chosenTuple._2
-
-    // First center
-    centersWithIndex = (index, chosenCenter) :: centersWithIndex
+    var chosenPotential = chosenTuple._2
+    val firstCenterPotential = chosenTuple._2
+    centersIndexed = (index, chosenCenter) :: centersIndexed
 
     var stop = false
-    var test = true
     while (!stop) {
       // Revise potential of points
-      potential = potential.map { case (a,b) =>
-        (a, b - chosenPotential *
-          math.exp(-beta * Vectors.sqdist(a, chosenCenter)))
+      potential = potential.map { case (x, y) =>
+        (x, y - chosenPotential *
+          exp(-beta * Vectors.sqdist(x, chosenCenter)))
       }
 
       // Find new center
       chosenTuple = potential.maxBy { _._2 }
       chosenCenter = chosenTuple._1
       chosenPotential = chosenTuple._2
-      test = true
 
       // Check stopping condition
+      var test = true
       while (test) {
         // Accept and continue
         if (chosenPotential > upperBound * firstCenterPotential) {
-          centersWithIndex = (index, chosenCenter) :: centersWithIndex
+          centersIndexed = (index, chosenCenter) :: centersIndexed
           test = false
-          if (centersWithIndex.length >= numPoints)
+          if (centersIndexed.length >= numPoints)
             stop = true
         }
-
         // Reject and stop
         else if (chosenPotential < lowerBound * firstCenterPotential) {
           test = false
           stop = true
         }
-
         // Gray zone
         else {
-          var dmin = centersWithIndex.map { case (_, c) =>
+          var dmin = centersIndexed.map { case (_, c) =>
             sqrt(Vectors.sqdist(chosenCenter, c))
           }.reduceLeft ( _ min _ )
 
           // Accept and continue
           if ((dmin / ra) + (chosenPotential / firstCenterPotential) >= 1) {
-            centersWithIndex = (index, chosenCenter) :: centersWithIndex
+            centersIndexed = (index, chosenCenter) :: centersIndexed
             test = false
-            if (centersWithIndex.length >= numPoints)
+            if (centersIndexed.length >= numPoints)
               stop = true
           }
-
           // Reject and re-test
           else {
-            potential = potential.map { case (a,b) =>
-              (a, if (a == chosenCenter) 0.0 else b)
+            potential = potential.map { case (x, y) =>
+              (x, if (x == chosenCenter) 0.0 else y)
             }
 
             // Find new center
@@ -239,7 +243,7 @@ class SubtractiveClustering(
       }
     }
 
-    centersWithIndex.iterator
+    centersIndexed.iterator
   }
 
   /**
@@ -251,6 +255,15 @@ class SubtractiveClustering(
   def chiuIntermediate(index: Int, data: Iterator[Vector]): Iterator[Vector] = {
     val localCenters = chiuLocal(index, data)
     localCenters.map ( _._2 )
+  }
+
+  /** Compute initial potential of points. */
+  private def initPotential(data: RDD[Vector]): RDD[(Vector, Double)] = {
+    val pairs = data.cartesian(data).coalesce(numPartitions)
+    val potential = pairs.map { case (x, y) =>
+      (x, exp(-alpha * Vectors.sqdist(x, y)))
+    }.reduceByKey ( _ + _ ).cache()
+    potential
   }
 }
 
@@ -273,7 +286,6 @@ object SubtractiveClustering {
     new SubtractiveClustering(ra, lowerBound, upperBound, numPartitions)
 
   /** Construct a SubtractiveClustering model with default parameters. */
-  def apply(): SubtractiveClustering =
-    new SubtractiveClustering()
-
+  def apply(numPartitions: Int): SubtractiveClustering =
+    new SubtractiveClustering(numPartitions)
 }

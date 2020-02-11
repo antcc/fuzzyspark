@@ -37,8 +37,8 @@ def print_data(data):
 def compute_range(data, ncols):
     """ Compute min and max values in every dimension."""
 
-    min_cols = [data[:,j].min() for j in range(ncols)]
-    max_cols = [data[:,j].max() for j in range(ncols)]
+    min_cols = [data[:, j].min() for j in range(ncols)]
+    max_cols = [data[:, j].max() for j in range(ncols)]
 
     return np.array([min_cols, max_cols])
 
@@ -46,18 +46,22 @@ def norm(data, nrows, ncols, range_cols):
     """Normalize data to [-L, L] from original values."""
 
     for j in range(ncols):
-        min = range_cols[0,j]
-        max = range_cols[1,j]
+        min = range_cols[0, j]
+        max = range_cols[1, j]
 
-        for i in range(nrows):
-            data[i, j] = - L + ((data[i, j] - min) * (2 * L)) / (max - min)
+        if max == min:
+            for i in range(nrows):
+                data[i, j] = 0.0
+        else:
+            for i in range(nrows):
+                data[i, j] = - L + ((data[i, j] - min) * (2 * L)) / (max - min)
 
 def denorm(data, nrows, ncols, range_cols):
     """Denormalize data from [-L, L] to original values."""
 
     for j in range(ncols):
-        min = range_cols[0,j]
-        max = range_cols[1,j]
+        min = range_cols[0, j]
+        max = range_cols[1, j]
 
         for i in range(nrows):
     	    data[i, j] = min + ((data[i, j] + L) * (max - min)) / (2 * L)

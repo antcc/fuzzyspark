@@ -29,7 +29,7 @@ import org.apache.spark.rdd.RDD
 /** Fuzzy C Means clustering algorithm. */
 private class FuzzyCMeans(
   private var initMode: String,
-  private var c: Option[Int],
+  private var c: Int,
   private var initCenters: Option[Array[Vector]],
   private var chiuInstance: Option[SubtractiveClustering],
   private var m: Int,
@@ -48,7 +48,7 @@ private class FuzzyCMeans(
    *     maxIter = 100, seed = random }
    */
   def this() =
-    this(FuzzyCMeans.RANDOM, Option(3), None, None, 2, 1e-6, 100, Random.nextLong)
+    this(FuzzyCMeans.RANDOM, 3, None, None, 2, 1e-6, 100, Random.nextLong)
 
   /** Initialization mode. */
   def getInitMode: String = initMode
@@ -74,20 +74,18 @@ private class FuzzyCMeans(
     this
   }
 
-  /** Number of clusters to create. */
-  def getC: Option[Int] = c
+  /** Number of clusters to create. Takes the value 0 if it's yet undefined. */
+  def getC: Int = c
 
   /**
    * Set number of clusters.
    *
    * @note Only relevant when initialization mode is RANDOM.
    */
-  def setC(c: Option[Int]): this.type = {
-    if (c.isDefined) {
-      require(
-        c.get > 0,
-        s"Number of clusters must be positive but got ${c}.")
-    }
+  def setC(c: Int): this.type = {
+    require(
+      c > 0,
+      s"Number of clusters must be positive but got ${c}.")
     this.c = c
     this
   }
@@ -170,7 +168,7 @@ private class FuzzyCMeans(
    * returned, if the data has less than `c` distinct points.
    */
   private def initRandom(data: RDD[Vector]) = {
-    data.takeSample(false, c.getOrElse(0), seed).distinct
+    data.takeSample(false, c, seed).distinct
   }
 
   /**
@@ -183,10 +181,13 @@ private class FuzzyCMeans(
     val sc = data.sparkContext
 
     // Compute initial centers
-    val chiuModel = chiuInstance.getOrElse(SubtractiveClustering())
+    val chiuModel = chiuInstance
+      .getOrElse(SubtractiveClustering(sc.defaultParallelism))
     var centers: Array[Vector] = initMode match {
       case RANDOM =>
         initRandom(data)
+      case PROVIDED =>
+        initCenters.getOrElse(Array[Vector]())
       case CHIU_GLOBAL =>
         chiuModel.chiuGlobal(data)
       case CHIU_LOCAL =>
@@ -198,11 +199,9 @@ private class FuzzyCMeans(
         data.mapPartitionsWithIndex ( chiuModel.chiuIntermediate )
           .collect()
           .toArray
-      case PROVIDED =>
-        initCenters.getOrElse(Array[Vector]())
     }
-    c = Option(centers.length)
-    require(c.get > 0, s"Number of centers must be positive but got ${c.get}.")
+    c = centers.length
+    require(c > 0, s"Number of centers must be positive but got ${c}.")
 
     // Compute initial membership matrix and loss
     var centersBroadcast = sc.broadcast(centers)
@@ -297,7 +296,7 @@ object FuzzyCMeans {
   def train(
     data: RDD[Vector],
     initMode: String,
-    c: Option[Int],
+    c: Int,
     initCenters: Option[Array[Vector]],
     chiuInstance: Option[SubtractiveClustering],
     m: Int,
@@ -327,7 +326,7 @@ object FuzzyCMeans {
   def train(
     data: RDD[Vector],
     initMode: String,
-    c: Option[Int] = None,
+    c: Int = 0,
     initCenters: Option[Array[Vector]] = None,
     chiuInstance: Option[SubtractiveClustering] = None): FuzzyCMeansModel = {
     new FuzzyCMeans().setC(c)
