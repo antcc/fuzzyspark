@@ -6,7 +6,7 @@ Simple project to test the algorithms developed in the package.
 
 Since the `fuzzyspark` package is not yet published, there are two ways of packaging the testing application to run it with `spark-submit`:
 
-1. Publishing the package into a local repository and adding it as a managed dependency in `build.sbt`:
+1. Publishing the package into a local repository with `sbt publishLocal` and adding it as a managed dependency in `build.sbt`:
 
 ```scala
 libraryDependencies ++= Seq(
