@@ -32,7 +32,6 @@ import org.apache.spark.rdd.RDD
  * [1] Bezdek, J. C. (2013). Pattern recognition with fuzzy objective
  *     function algorithms. Springer Science & Business Media.
  */
-*/
 private class FuzzyCMeans(
   private var initMode: String,
   private var c: Int,
