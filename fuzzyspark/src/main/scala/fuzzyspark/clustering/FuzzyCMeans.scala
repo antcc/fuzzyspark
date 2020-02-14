@@ -26,7 +26,13 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
 
-/** Fuzzy C Means clustering algorithm. */
+/**
+ * Fuzzy C Means clustering algorithm [1].
+ *
+ * [1] Bezdek, J. C. (2013). Pattern recognition with fuzzy objective
+ *     function algorithms. Springer Science & Business Media.
+ */
+*/
 private class FuzzyCMeans(
   private var initMode: String,
   private var c: Int,
@@ -84,8 +90,8 @@ private class FuzzyCMeans(
    */
   def setC(c: Int): this.type = {
     require(
-      c > 0,
-      s"Number of clusters must be positive but got ${c}.")
+      c >= 0,
+      s"Number of clusters must be nonnegative but got ${c}.")
     this.c = c
     this
   }
@@ -331,8 +337,8 @@ object FuzzyCMeans {
     chiuInstance: Option[SubtractiveClustering] = None): FuzzyCMeansModel = {
     new FuzzyCMeans().setC(c)
       .setInitMode(initMode)
-      .setChiuInstance(chiuInstance)
       .setInitCenters(initCenters)
+      .setChiuInstance(chiuInstance)
       .run(data)
   }
 

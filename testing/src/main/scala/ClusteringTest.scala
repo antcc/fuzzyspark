@@ -24,13 +24,14 @@ import java.io.PrintWriter
 import scala.io.Source
 
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkContext, SparkConf}
 
 object ClusteringTest {
 
   /** Configuration parameters. */
-  val hdfs = false
-  val numPartitions = 4
+  val hdfs = true
+  val numPartitions =  37 * 5 // 13 for global, 37 *5 for local
   val saveFile = false
   val outFile = "output/centers_norm.txt"
 
@@ -55,7 +56,43 @@ object ClusteringTest {
     result
   }
 
-  /** Clustering example with Fuzzy C Means. */
+  /** Test the Subtractive Clustering global algorithm. */
+  def testChiuGlobal(data: RDD[Vector]) = {
+    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
+    val centers = chiu.chiuGlobal(data)
+    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+  }
+
+  /** Test the Subtractive Clustering local algorithm. */
+  def testChiuLocal(data: RDD[Vector]) = {
+    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
+    val centers = data.mapPartitionsWithIndex ( chiu.chiuLocal )
+      .map ( _._2 )
+      .collect()
+      .toArray
+    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+  }
+
+  /** Train a Fuzzy C Means model. */
+  def testFuzzyCMeans(data: RDD[Vector]) = {
+    val fcmModel = FuzzyCMeans.train(
+      data,
+      initMode = FuzzyCMeans.CHIU_GLOBAL,
+      chiuInstance = Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions))
+    )
+
+    println("\n\n--> NO. OF CENTERS: " + fcmModel.c)
+    println("--> LOSS: " + fcmModel.trainingLoss)
+    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter)
+    if (saveFile)
+      printToFile(outFile, centersToString(fcmModel.clusterCenters))
+    else
+      println("--> CLUSTER CENTERS:\n" +
+        fcmModel.clusterCenters.map ( _.toString ).mkString("\n")) +
+        "\n\n"
+  }
+
+  /** Clustering examples with fuzzyspark. */
   def main(args: Array[String]) = {
     // Spark environment configuration
     val conf = new SparkConf().setAppName("FCMClusteringTest")
@@ -75,34 +112,10 @@ object ClusteringTest {
         Vectors.dense(line.split(",").map ( _.toDouble ))
     }.cache()
 
-    // Test Chiu Global
-    /**val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
-    val centers = chiu.chiuGlobal(data)
-    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")*/
-
-    // Test Chiu Local
-    val centers2 = data.mapPartitionsWithIndex ( chiu.chiuLocal )
-      .map ( _._2 )
-      .collect()
-      .toArray
-    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
-
-    // Train a FCM model on the data using initial centers from Chiu
-    /**val fcmModel = FuzzyCMeans.train(
-      data,
-      initMode = FuzzyCMeans.CHIU_GLOBAL,
-      chiuInstance = Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions))
-    )
-
-    // Print cluster centers
-    println("\n--> NO. OF CENTERS: " + fcmModel.c)
-    println("--> LOSS: " + fcmModel.trainingLoss)
-    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter)
-    if (saveFile)
-      printToFile(outFile, centersToString(fcmModel.clusterCenters))
-    else
-      println("--> CLUSTER CENTERS:\n" +
-        fcmModel.clusterCenters.map ( _.toString ).mkString("\n"))*/
+    // Test functions
+    //testChiuGlobal(data)
+    testChiuLocal(data)
+    //testFuzzyCMeans(data)
 
     // Stop spark
     sc.stop()
