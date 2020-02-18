@@ -36,7 +36,8 @@ class SubtractiveClustering(
   private var ra: Double,
   var lowerBound: Double,
   var upperBound: Double,
-  var numPartitions: Int
+  var numPartitions: Int,
+  var numGroups: Int
 ) extends Serializable {
 
   /** Rest of algorithm parameters. */
@@ -46,9 +47,9 @@ class SubtractiveClustering(
 
   /**
    * Construct object with default parameters:
-   *   { ra = 0.3, lowerBound = 0.15, upperBound = 0.5 }
+   *   { ra = 0.3, lowerBound = 0.15, upperBound = 0.5, numGroups = 4 }
    */
-  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions)
+  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions, 4)
 
   /** Neighbourhood radius. */
   def getRadius: Double = ra
@@ -69,20 +70,22 @@ class SubtractiveClustering(
    * Get cluster centers applying the global version of the
    * subtractive clustering algorithm.
    */
-  def chiuGlobal(data: RDD[Vector]): Array[Vector] = {
+  def chiuGlobal(
+    data: RDD[Vector],
+    initPotential: Option[RDD[(Vector, Double)]] = None): Array[Vector] = {
     val sc = data.sparkContext
     val numPoints = data.count()
     var centers = List[Vector]()
 
     // Compute initial potential
-    var potential: RDD[(Vector, Double)] = initPotentialRDD(data)
+    var potential = initPotential.getOrElse(initPotentialRDD(data))
 
     // Compute initial center
     var chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
     var chosenCenter = chosenTuple._1
     var chosenPotential = chosenTuple._2
     val firstCenterPotential = chosenTuple._2
-    centers = chosenCenter :: centers
+    centers ::= chosenCenter
 
     // Main loop of the algorithm
     var stop = false
@@ -103,7 +106,7 @@ class SubtractiveClustering(
       while (test) {
         // Accept and continue
         if (chosenPotential > upperBound * firstCenterPotential) {
-          centers = chosenCenter :: centers
+          centers ::= chosenCenter
           test = false
           if (centers.length >= numPoints)
             stop = true
@@ -121,7 +124,7 @@ class SubtractiveClustering(
 
           // Accept and continue
           if ((dmin / ra) + (chosenPotential / firstCenterPotential) >= 1) {
-            centers = chosenCenter :: centers
+            centers ::= chosenCenter
             test = false
             if (centers.length >= numPoints)
               stop = true
@@ -146,16 +149,16 @@ class SubtractiveClustering(
 
   /**
    * Get cluster centers applying the local version of the
-   * subtractive clustering algorithm.
+   * subtractive clustering algorithm. The data is spread evenly
+   * across partitions and cluster centers are calculated in each one
+   * of them.
    *
-   * The data is spread evenly across partitions and cluster
-   * centers are calculated in each one of them.
-   *
-   * @return Iterator to a List[(Int, Vector)] which contains the
-   * cluster centers together with the index of the partition.
+   * @return Iterator to a List[(Int, Vector, Double)] which contains the
+   * cluster centers together with the index of the partition and their
+   * potential value.
    */
-  def chiuLocal(index: Int, it: Iterator[Vector]): Iterator[(Int, Vector)] = {
-    var centersIndexed = List[(Int, Vector)]()
+  def chiuLocal(index: Int, it: Iterator[Vector]): Iterator[(Int, Vector, Double)] = {
+    var centersIndexed = List[(Int, Vector, Double)]()
 
     // Compute initial potential
     var potential: Map[Vector, Double] = initPotentialIterator(it)
@@ -166,7 +169,7 @@ class SubtractiveClustering(
     var chosenCenter = chosenTuple._1
     var chosenPotential = chosenTuple._2
     val firstCenterPotential = chosenTuple._2
-    centersIndexed = (index, chosenCenter) :: centersIndexed
+    centersIndexed ::= (index, chosenCenter, chosenPotential)
 
     var stop = false
     while (!stop) {
@@ -186,7 +189,7 @@ class SubtractiveClustering(
       while (test) {
         // Accept and continue
         if (chosenPotential > upperBound * firstCenterPotential) {
-          centersIndexed = (index, chosenCenter) :: centersIndexed
+          centersIndexed ::= (index, chosenCenter, chosenPotential)
           test = false
           if (centersIndexed.length >= numPoints)
             stop = true
@@ -198,13 +201,13 @@ class SubtractiveClustering(
         }
         // Gray zone
         else {
-          var dmin = centersIndexed.map { case (_, c) =>
+          var dmin = centersIndexed.map { case (_, c, _) =>
             sqrt(Vectors.sqdist(chosenCenter, c))
           }.reduceLeft ( _ min _ )
 
           // Accept and continue
           if ((dmin / ra) + (chosenPotential / firstCenterPotential) >= 1) {
-            centersIndexed = (index, chosenCenter) :: centersIndexed
+            centersIndexed ::= (index, chosenCenter, chosenPotential)
             test = false
             if (centersIndexed.length >= numPoints)
               stop = true
@@ -228,12 +231,56 @@ class SubtractiveClustering(
   /**
    * Get cluster centers applying the intermediate version of the
    * subtractive clustering algorithm.
-   *
-   * @return Iterator to a List[Vector] containing the cluster centers.
    */
-  def chiuIntermediate(index: Int, data: Iterator[Vector]): Iterator[Vector] = {
-    val localCenters = chiuLocal(index, data).map ( _._2 )
-    localCenters //TODO implementar
+  def chiuIntermediate(data: RDD[Vector]): Array[Vector] = {
+    val sc = data.sparkContext
+
+    // Get centers per partition
+    var localCentersIndexed = data.mapPartitionsWithIndex ( chiuLocal )
+      .collect()
+      .toArray
+    val localCenters = localCentersIndexed.map ( _._2 )
+    val numCenters = localCenters.size
+
+    // Refine centers with Fuzzy C Means for a few iterations, using all the data
+    val fcmModel = FuzzyCMeans.train(
+      data,
+      initMode = FuzzyCMeans.PROVIDED,
+      numPartitions = numPartitions,
+      initCenters = Option(localCenters),
+      maxIter = 10
+    )
+
+    // Update indexed centers
+    // NOTE: we don't change the potential even though the centers might have changed
+    localCentersIndexed = localCentersIndexed.zipWithIndex.map {
+      case ((p, _, d), i) => (p, fcmModel.clusterCenters(i), d)
+    }
+
+    // Group centers every few partitions
+    var centersPotential = List[Array[(Vector, Double)]]()
+    for (i <- 0 until numCenters by numGroups) {
+      var centersGrouped = Array[(Vector, Double)]()
+      for (j <- i until i + numGroups) {
+        // Normalize potential of centers to later compare them
+        val centersFiltered = localCentersIndexed.filter ( _._1 == j )
+        centersGrouped ++= centersFiltered.map { case (_, c, d) =>
+          (c, d / centersFiltered.size)
+        }
+      }
+      centersPotential ::= centersGrouped
+    }
+
+    // Apply global version to refine centers in every group and concatenate the results
+    var centers = Array[Vector]()
+    for (cs <- centersPotential) {
+      centers ++= chiuGlobal(
+        sc.parallelize(cs.map ( _._1 )),
+        Option(sc.parallelize(cs))
+      )
+    }
+
+    centers
   }
 
   /** Compute initial potential of points given as an `RDD`. */
@@ -267,13 +314,15 @@ object SubtractiveClustering {
    * @param lowerBound Lower bound for stopping condition.
    * @param upperBound Upper bound for stopping condition.
    * @param numPartitions Number of partitions for local and intermediate versions.
+   * @param numGroups Number of groups for intermediate version.
    */
   def apply(
     ra: Double,
     lowerBound: Double,
     upperBound: Double,
-    numPartitions: Int): SubtractiveClustering =
-    new SubtractiveClustering(ra, lowerBound, upperBound, numPartitions)
+    numPartitions: Int,
+    numGroups: Int): SubtractiveClustering =
+    new SubtractiveClustering(ra, lowerBound, upperBound, numPartitions, numGroups)
 
   /** Construct a SubtractiveClustering model with default parameters. */
   def apply(numPartitions: Int): SubtractiveClustering =

@@ -34,6 +34,7 @@ import org.apache.spark.rdd.RDD
  */
 private class FuzzyCMeans(
   private var initMode: String,
+  private var numPartitions: Int,
   private var c: Int,
   private var initCenters: Option[Array[Vector]],
   private var chiuInstance: Option[SubtractiveClustering],
@@ -52,8 +53,8 @@ private class FuzzyCMeans(
    *     chiuInstance = None, m = 2, epsilon = 1e-6,
    *     maxIter = 100, seed = random }
    */
-  def this() =
-    this(FuzzyCMeans.RANDOM, 3, None, None, 2, 1e-6, 100, Random.nextLong)
+  def this(numPartitions: Int) =
+    this(FuzzyCMeans.RANDOM, numPartitions, 3, None, None, 2, 1e-6, 100, Random.nextLong)
 
   /** Initialization mode. */
   def getInitMode: String = initMode
@@ -76,6 +77,18 @@ private class FuzzyCMeans(
       validateInitMode(initMode),
       s"Initialization mode must be one of the supported values but got ${initMode}.")
     this.initMode = initMode
+    this
+  }
+
+  /** Desired level of parallelism. */
+  def getNumPartitions: Int = numPartitions
+
+  /** Set desired level of parallelism. */
+  def setNumPartitions(numPartitions: Int): this.type = {
+    require(
+      numPartitions >= 1,
+      s"Number of partitions must be positive but got ${c}.")
+    this.numPartitions = numPartitions
     this
   }
 
@@ -186,31 +199,35 @@ private class FuzzyCMeans(
     val sc = data.sparkContext
 
     // Compute initial centers
-    val chiuModel = chiuInstance
-      .getOrElse(SubtractiveClustering(sc.defaultParallelism))
     var centers: Array[Vector] = initMode match {
       case RANDOM =>
         initRandom(data)
       case PROVIDED =>
         initCenters.getOrElse(Array[Vector]())
       case CHIU_GLOBAL =>
+        val chiuModel = chiuInstance
+          .getOrElse(SubtractiveClustering(sqrt(numPartitions).toInt))
         chiuModel.chiuGlobal(data)
       case CHIU_LOCAL =>
+        val chiuModel = chiuInstance
+          .getOrElse(SubtractiveClustering(numPartitions))
         data.mapPartitionsWithIndex ( chiuModel.chiuLocal )
           .map ( _._2 )
           .collect()
           .toArray
       case CHIU_INTERMEDIATE =>
-        data.mapPartitionsWithIndex ( chiuModel.chiuIntermediate )
-          .collect()
-          .toArray
+        val chiuModel = chiuInstance
+          .getOrElse(SubtractiveClustering(numPartitions))
+        chiuModel.chiuIntermediate(data)
     }
     c = centers.length
     require(c > 0, s"Number of centers must be positive but got ${c}.")
 
     // Compute initial membership matrix and loss
     var centersBroadcast = sc.broadcast(centers)
-    var u = data.map ( computeRow(_, centersBroadcast, m) ).cache()
+    var u = data.map ( computeRow(_, centersBroadcast, m) )
+      .repartition(numPartitions)
+      .cache()
     var uOld = u
 
     // Main loop of the algorithm
@@ -290,6 +307,7 @@ object FuzzyCMeans {
    *
    * @param data Training points as an `RDD` of `Vector` types.
    * @param initMode The initialization algorithm.
+   * @param numPartitions Desired number of partitions.
    * @param c Number of clusters to create.
    * @param initCenters Initial cluster centers.
    * @param chiuInstance Instance of SubtractiveClustering.
@@ -301,15 +319,17 @@ object FuzzyCMeans {
   def train(
     data: RDD[Vector],
     initMode: String,
-    c: Int,
-    initCenters: Option[Array[Vector]],
-    chiuInstance: Option[SubtractiveClustering],
-    m: Int,
-    epsilon: Double,
-    maxIter: Int,
-    seed: Long): FuzzyCMeansModel = {
+    numPartitions: Int,
+    c: Int = 0,
+    initCenters: Option[Array[Vector]] = None,
+    chiuInstance: Option[SubtractiveClustering] = None,
+    m: Int = 2,
+    epsilon: Double = 1e-6,
+    maxIter: Int = 100,
+    seed: Long = Random.nextLong): FuzzyCMeansModel = {
     new FuzzyCMeans(
       initMode,
+      numPartitions,
       c,
       initCenters,
       chiuInstance,
@@ -317,28 +337,6 @@ object FuzzyCMeans {
       epsilon,
       maxIter,
       seed).run(data)
-  }
-
-  /**
-   * Train a Fuzzy C Means model using specified parameters,
-   * and default parameters for the rest.
-   *
-   * @param data Training points as an `RDD` of `Vector` types.
-   * @param initMode The initialization algorithm.
-   * @param c Number of clusters to create.
-   * @param initCenters Initial cluster centers.
-   */
-  def train(
-    data: RDD[Vector],
-    initMode: String,
-    c: Int = 0,
-    initCenters: Option[Array[Vector]] = None,
-    chiuInstance: Option[SubtractiveClustering] = None): FuzzyCMeansModel = {
-    new FuzzyCMeans().setC(c)
-      .setInitMode(initMode)
-      .setInitCenters(initCenters)
-      .setChiuInstance(chiuInstance)
-      .run(data)
   }
 
   /**

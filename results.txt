@@ -1,0 +1,85 @@
+Num executors: 37
+Cores/executor: 5
+Memory/executor: 28 GB
+
+--- CHIU GLOBAL ---
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 13
+No. of centers found: 43
+Total time: 10m 00s
+
+--- CHIU LOCAL --
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37 * 5 = 185
+No. of centers found: 10324
+Total time: 00m 40s
+
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37
+No. of centers found: 1728
+Total time: 00m 45s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5 = 185
+No. of centers found: 542
+Total time: 03m 00s
+
+Data: 2000000 points with 7 dimensions (household_power_consumption_norm.txt)
+Initial partitions: 37 * 5 = 185
+Exception after ~10 min:
+
+    20/02/16 20:30:45 WARN HeartbeatReceiver: Removing executor 14 with no recent heartbeats: 121970 ms exceeds timeout 120000 ms
+    20/02/16 20:30:45 ERROR YarnScheduler: Lost executor 14 on node111.imuds.es: Executor heartbeat timed out after 121970 ms
+    20/02/16 20:30:45 WARN TaskSetManager: Lost task 77.0 in stage 0.0 (TID 77, node111.imuds.es, executor 14): ExecutorLostFailure (executor 14 exited caused by one of the running tasks) Reason: Executor heartbeat timed out after 121970 ms
+
+--- FUZZY C MEANS (RANDOM) --
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37 * 5 = 185
+No. of centers: 10
+Loss: 5861.06
+No. of iterations: 100
+Total time: 04m 40s
+
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37 * 5 = 185
+No. of centers: 43
+Loss: 1241.74
+No. of iterations: 100
+Total time: 10m 00s
+
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37 * 2 = 74
+No. of centers: 43
+Loss: 1269.71
+No. of iterations: 100
+Total time: 06m 00s
+
+Data: 100000 points with 4 dimensions (test100000.csv) <--
+Initial partitions: 37
+No. of centers: 43
+Loss: 1246.44
+No. of iterations: 100
+Total time: 05m 30s
+
+Data: 2000000 points with 7 dimensions (household_power_consumption_norm.txt)
+Initial partitions: 37 * 5 = 185
+No. of centers: 10
+Loss: 46856.66
+No. of iterations: 100
+Total time: 20m 00s
+
+Data: 2000000 points with 7 dimensions (household_power_consumption_norm.txt) <--
+Initial partitions: 37
+No. of centers: 10
+Loss: 48188.96
+No. of iterations: 100
+Total time: 06m 00s
+
+--- FUZZY C MEANS (CHIU_GLOBAL) --
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 13
+FCM partitions: 13 * 13 = 169
+Loss: 1257.75
+No. of iterations: 100
+No. of centers found: 43
+Total time: 20m 00s

@@ -31,7 +31,8 @@ object ClusteringTest {
 
   /** Configuration parameters. */
   val hdfs = true
-  val numPartitions =  37 * 5 // 13 for global, 37 *5 for local
+  val numPartitions = 37
+  val numGroups = 8
   val saveFile = false
   val outFile = "output/centers_norm.txt"
 
@@ -58,14 +59,14 @@ object ClusteringTest {
 
   /** Test the Subtractive Clustering global algorithm. */
   def testChiuGlobal(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
+    val chiu = SubtractiveClustering(numPartitions)
     val centers = chiu.chiuGlobal(data)
     println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
   }
 
   /** Test the Subtractive Clustering local algorithm. */
   def testChiuLocal(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions)
+    val chiu = SubtractiveClustering(numPartitions)
     val centers = data.mapPartitionsWithIndex ( chiu.chiuLocal )
       .map ( _._2 )
       .collect()
@@ -73,12 +74,22 @@ object ClusteringTest {
     println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
   }
 
+  /** Test the Subtractive Clustering intermediate algorithm. */
+  def testChiuIntermediate(data: RDD[Vector]) = {
+    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numGroups)
+    val centers = chiu.chiuIntermediate(data)
+    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+  }
+
   /** Train a Fuzzy C Means model. */
   def testFuzzyCMeans(data: RDD[Vector]) = {
     val fcmModel = FuzzyCMeans.train(
       data,
-      initMode = FuzzyCMeans.CHIU_GLOBAL,
-      chiuInstance = Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions))
+      initMode = FuzzyCMeans.RANDOM,
+      c = 43,
+      numPartitions = numPartitions,
+      chiuInstance =
+        Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numGroups))
     )
 
     println("\n\n--> NO. OF CENTERS: " + fcmModel.c)
@@ -114,7 +125,8 @@ object ClusteringTest {
 
     // Test functions
     //testChiuGlobal(data)
-    testChiuLocal(data)
+    //testChiuLocal(data)
+    testChiuIntermediate(data)
     //testFuzzyCMeans(data)
 
     // Stop spark
