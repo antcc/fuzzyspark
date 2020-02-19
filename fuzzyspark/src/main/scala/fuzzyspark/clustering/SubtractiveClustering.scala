@@ -37,7 +37,7 @@ class SubtractiveClustering(
   var lowerBound: Double,
   var upperBound: Double,
   var numPartitions: Int,
-  var numGroups: Int
+  var numPartitionsPerGroup: Int
 ) extends Serializable {
 
   /** Rest of algorithm parameters. */
@@ -47,9 +47,10 @@ class SubtractiveClustering(
 
   /**
    * Construct object with default parameters:
-   *   { ra = 0.3, lowerBound = 0.15, upperBound = 0.5, numGroups = 4 }
+   *   { ra = 0.3, lowerBound = 0.15,
+   *     upperBound = 0.5, numPartitionsPerGroup = numPartitions / 2 }
    */
-  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions, 4)
+  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions, numPartitions / 2)
 
   /** Neighbourhood radius. */
   def getRadius: Double = ra
@@ -243,7 +244,7 @@ class SubtractiveClustering(
     val numCenters = localCenters.size
 
     // Refine centers with Fuzzy C Means for a few iterations, using all the data
-    val fcmModel = FuzzyCMeans.train(
+    /**val fcmModel = FuzzyCMeans.train(
       data,
       initMode = FuzzyCMeans.PROVIDED,
       numPartitions = numPartitions,
@@ -255,14 +256,14 @@ class SubtractiveClustering(
     // NOTE: we don't change the potential even though the centers might have changed
     localCentersIndexed = localCentersIndexed.zipWithIndex.map {
       case ((p, _, d), i) => (p, fcmModel.clusterCenters(i), d)
-    }
+    }*/
 
     // Group centers every few partitions
     var centersPotential = List[Array[(Vector, Double)]]()
-    for (i <- 0 until numCenters by numGroups) {
+    for (i <- 0 until numPartitions by numPartitionsPerGroup) {
       var centersGrouped = Array[(Vector, Double)]()
-      for (j <- i until i + numGroups) {
-        // Normalize potential of centers to later compare them
+      for (j <- i until i + numPartitionsPerGroup if j < numPartitions) {
+        // Normalize potential of centers so that they are comparable
         val centersFiltered = localCentersIndexed.filter ( _._1 == j )
         centersGrouped ++= centersFiltered.map { case (_, c, d) =>
           (c, d / centersFiltered.size)
@@ -273,12 +274,15 @@ class SubtractiveClustering(
 
     // Apply global version to refine centers in every group and concatenate the results
     var centers = Array[Vector]()
+    val numPartitionsOld = numPartitions
+    numPartitions = sqrt(numPartitionsOld).toInt
     for (cs <- centersPotential) {
       centers ++= chiuGlobal(
-        sc.parallelize(cs.map ( _._1 )),
-        Option(sc.parallelize(cs))
+        sc.parallelize(cs.map ( _._1 ), numPartitions),
+        Option(sc.parallelize(cs, numPartitions))
       )
     }
+    numPartitions = numPartitionsOld
 
     centers
   }
@@ -314,15 +318,20 @@ object SubtractiveClustering {
    * @param lowerBound Lower bound for stopping condition.
    * @param upperBound Upper bound for stopping condition.
    * @param numPartitions Number of partitions for local and intermediate versions.
-   * @param numGroups Number of groups for intermediate version.
+   * @param numPartitionsPerGroup Number of partition per group for intermediate version.
    */
   def apply(
     ra: Double,
     lowerBound: Double,
     upperBound: Double,
     numPartitions: Int,
-    numGroups: Int): SubtractiveClustering =
-    new SubtractiveClustering(ra, lowerBound, upperBound, numPartitions, numGroups)
+    numPartitionsPerGroup: Int): SubtractiveClustering =
+    new SubtractiveClustering(
+      ra,
+      lowerBound,
+      upperBound,
+      numPartitions,
+      numPartitionsPerGroup)
 
   /** Construct a SubtractiveClustering model with default parameters. */
   def apply(numPartitions: Int): SubtractiveClustering =

@@ -32,6 +32,25 @@ Exception after ~10 min:
     20/02/16 20:30:45 ERROR YarnScheduler: Lost executor 14 on node111.imuds.es: Executor heartbeat timed out after 121970 ms
     20/02/16 20:30:45 WARN TaskSetManager: Lost task 77.0 in stage 0.0 (TID 77, node111.imuds.es, executor 14): ExecutorLostFailure (executor 14 exited caused by one of the running tasks) Reason: Executor heartbeat timed out after 121970 ms
 
+--- CHIU INTERMEDIATE (W/O FCM) ---
+Data: 100000 points with 4 dimensions (test100000.csv)
+Initial partitions: 37
+Partitions per group: 37
+No. of centers found: 47
+Total time: 01m 00s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partitions per group: 37
+No. of centers found: 5
+Total time: 03m 00s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partitions per group: 19
+No. of centers found: 13
+Total time: 03m 00s
+
 --- FUZZY C MEANS (RANDOM) --
 Data: 100000 points with 4 dimensions (test100000.csv)
 Initial partitions: 37 * 5 = 185
@@ -61,6 +80,20 @@ Loss: 1246.44
 No. of iterations: 100
 Total time: 05m 30s
 
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37
+No. of centers: 13
+Loss: 18031.58
+No. of iterations: 100
+Total time: 05m 00s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37
+No. of centers: 13
+Loss: 19146.11
+No. of iterations: 10
+Total time: 01m 32s
+
 Data: 2000000 points with 7 dimensions (household_power_consumption_norm.txt)
 Initial partitions: 37 * 5 = 185
 No. of centers: 10
@@ -83,3 +116,40 @@ Loss: 1257.75
 No. of iterations: 100
 No. of centers found: 43
 Total time: 20m 00s
+
+--- FUZZY C MEANS (CHIU_INTERMEDIATE W/O FCM) --
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partititons per group: 19
+FCM partitions: 37
+No. of centers found: 13
+Loss: 18077.31
+No. of iterations: 100
+Total time: 09m 20s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partititons per group: 19
+FCM partitions: 37
+No. of centers found: 13
+Loss: 21015.07
+No. of iterations: 10
+Total time: 04m 10s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partititons per group: 10
+FCM partitions: 37
+No. of centers found: 29
+Loss: 8126.78
+No. of iterations: 100
+Total time: 25m 00s
+
+Data: 1000000 points with 7 dimensions (test.txt)
+Initial partitions: 37 * 5
+Partititons per group: 10
+FCM partitions: 37 * 3 = 111
+No. of centers found: 29
+Loss: 8126.78
+No. of iterations: 100
+Total time: 

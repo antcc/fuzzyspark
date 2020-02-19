@@ -226,8 +226,15 @@ private class FuzzyCMeans(
     // Compute initial membership matrix and loss
     var centersBroadcast = sc.broadcast(centers)
     var u = data.map ( computeRow(_, centersBroadcast, m) )
-      .repartition(numPartitions)
-      .cache()
+    if (numPartitions > data.getNumPartitions) {
+      u = u.repartition(numPartitions).cache()
+    }
+    else if (numPartitions < data.getNumPartitions) {
+      u = u.coalesce(numPartitions).cache()
+    }
+    else {
+      u = u.cache()
+    }
     var uOld = u
 
     // Main loop of the algorithm

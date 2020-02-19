@@ -31,9 +31,9 @@ object ClusteringTest {
 
   /** Configuration parameters. */
   val hdfs = true
-  val numPartitions = 37
-  val numGroups = 8
-  val saveFile = false
+  val numPartitions = 37 * 5
+  val numPartitionsPerGroup = 10
+  val saveFile = true
   val outFile = "output/centers_norm.txt"
 
   /** Print a string `s` to a file `f`. */
@@ -46,9 +46,9 @@ object ClusteringTest {
   def centersToString(centers: Array[Vector]): String = {
     var result = ""
     for (c <- centers) {
-      for (i <- 0 to c.size - 1) {
+      for (i <- 0 until c.size) {
         result += c(i)
-        if (i != c.size - 1)
+        if (i < c.size - 1)
           result += ","
         else
           result += "\n"
@@ -76,7 +76,7 @@ object ClusteringTest {
 
   /** Test the Subtractive Clustering intermediate algorithm. */
   def testChiuIntermediate(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numGroups)
+    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numPartitionsPerGroup)
     val centers = chiu.chiuIntermediate(data)
     println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
   }
@@ -85,33 +85,35 @@ object ClusteringTest {
   def testFuzzyCMeans(data: RDD[Vector]) = {
     val fcmModel = FuzzyCMeans.train(
       data,
-      initMode = FuzzyCMeans.RANDOM,
-      c = 43,
-      numPartitions = numPartitions,
+      initMode = FuzzyCMeans.CHIU_INTERMEDIATE,
+      numPartitions = 37 * 3,
       chiuInstance =
-        Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numGroups))
+        Option(SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numPartitionsPerGroup))
     )
 
     println("\n\n--> NO. OF CENTERS: " + fcmModel.c)
     println("--> LOSS: " + fcmModel.trainingLoss)
-    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter)
-    if (saveFile)
+    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter + "\n")
+    if (saveFile) {
       printToFile(outFile, centersToString(fcmModel.clusterCenters))
-    else
+      println("--> SAVED CENTERS TO FILE " + outFile + "\n\n")
+    }
+    else {
       println("--> CLUSTER CENTERS:\n" +
         fcmModel.clusterCenters.map ( _.toString ).mkString("\n")) +
         "\n\n"
+    }
   }
 
   /** Clustering examples with fuzzyspark. */
   def main(args: Array[String]) = {
     // Spark environment configuration
-    val conf = new SparkConf().setAppName("FCMClusteringTest")
+    val conf = new SparkConf().setAppName("ClusteringTest")
     val sc = new SparkContext(conf)
 
     // Get input file
     var inputFile = args.headOption.getOrElse {
-      Console.err.println("No input file provided. Aborting...")
+      Console.err.println("\n\n--> NO INPUT FILE PROVIDED. ABORTING...\n")
       sys.exit(1)
     }
     if (hdfs)
@@ -126,8 +128,8 @@ object ClusteringTest {
     // Test functions
     //testChiuGlobal(data)
     //testChiuLocal(data)
-    testChiuIntermediate(data)
-    //testFuzzyCMeans(data)
+    //testChiuIntermediate(data)
+    testFuzzyCMeans(data)
 
     // Stop spark
     sc.stop()
