@@ -23,7 +23,8 @@ https://www.gnu.org/licenses/gpl-3.0.html.
 import numpy as np
 import sys
 
-L = 1   # Normalize to interval [-L, L]
+L = 1        # Normalize to interval [-L, L]
+DELIM = ' '  # Dimension delimiter in input file
 
 def print_data(data):
     """Print data in the same format as the input data."""
@@ -71,7 +72,7 @@ def main():
         print("use: ./dproc.py [--norm, --denorm, --range] DATA [DATA_RANGE]")
         sys.exit(1)
 
-    data = np.genfromtxt(sys.argv[2], delimiter=',')
+    data = np.genfromtxt(sys.argv[2], delimiter = DELIM)
     nrows, ncols = data.shape
 
     if (sys.argv[1] == "--norm"):
