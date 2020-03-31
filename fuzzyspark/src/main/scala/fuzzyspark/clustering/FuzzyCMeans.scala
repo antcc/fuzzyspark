@@ -389,7 +389,7 @@ object FuzzyCMeans {
     centers: Broadcast[Array[Vector]],
     m: Int) = {
     u.map { case (x, r) =>
-      r.toArray.zip(centers.value).map { case(e, c) =>
+      r.toArray.zip(centers.value).map { case (e, c) =>
         pow(e, m) * Vectors.sqdist(x, c)
       }.sum
     }.sum

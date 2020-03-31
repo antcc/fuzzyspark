@@ -1,4 +1,4 @@
-#! /usr/bin/env/python
+#!/usr/bin/env/python
 # coding: utf-8
 
 """
@@ -65,9 +65,11 @@ def denorm(data, nrows, ncols, range_cols):
         max = range_cols[1, j]
 
         for i in range(nrows):
-    	    data[i, j] = min + ((data[i, j] + L) * (max - min)) / (2 * L)
+            data[i, j] = min + ((data[i, j] + L) * (max - min)) / (2 * L)
 
 def main():
+    """Main function."""
+    
     if (len(sys.argv) < 3):
         print("use: ./dproc.py [--norm, --denorm, --range] DATA [DATA_RANGE]")
         sys.exit(1)

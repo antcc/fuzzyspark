@@ -19,7 +19,7 @@
 
 package fuzzyspark.clustering
 
-import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 
 /** A clustering model for Fuzzy C Means. */
