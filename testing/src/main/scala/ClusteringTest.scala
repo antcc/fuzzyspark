@@ -38,7 +38,7 @@ object ClusteringTest {
   val hdfs = true
   val numPartitions = 5
   val numPartitionsPerGroup = 10
-  val saveFile = true
+  val saveFile = false
   val outFile = "output/centers_norm.txt"
 
   /** Print a string `s` to a file `f`. */
@@ -63,55 +63,61 @@ object ClusteringTest {
   }
 
   /** Test the Subtractive Clustering global algorithm. */
-  def testChiuGlobal(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(numPartitions)
+  def testChiuGlobal(data: RDD[Vector], ra: Double) = {
+    val chiu = SubtractiveClustering(numPartitions).setRadius(ra)
     val centers = chiu.chiuGlobal(data)
 
     // Print results
-    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+    println("--> NO. OF CENTERS: " + centers.length)
     if (saveFile) {
       printToFile(outFile, centersToString(centers))
-      println("--> SAVED CENTERS TO FILE " + outFile + "\n\n")
+      println("--> SAVED CENTERS TO FILE " + outFile)
     }
     else {
-      println("--> CLUSTER CENTERS:\n" + centers + "\n\n")
+      println("--> CLUSTER CENTERS:\n")
+      centers.foreach(println)
+      println("\n")
     }
 
     centers
   }
 
   /** Test the Subtractive Clustering local algorithm. */
-  def testChiuLocal(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(numPartitions)
+  def testChiuLocal(data: RDD[Vector], ra: Double) = {
+    val chiu = SubtractiveClustering(numPartitions).setRadius(ra)
     val centers = data.mapPartitionsWithIndex ( chiu.chiuLocal )
       .map ( _._2 )
       .collect()
       .toArray
 
     // Print results
-    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+    println("--> NO. OF CENTERS: " + centers.length)
     if (saveFile) {
       printToFile(outFile, centersToString(centers))
-      println("--> SAVED CENTERS TO FILE " + outFile + "\n\n")
+      println("--> SAVED CENTERS TO FILE " + outFile)
     }
     else {
-      println("--> CLUSTER CENTERS:\n" + centers + "\n\n")
+      println("--> CLUSTER CENTERS:\n")
+      centers.foreach(println)
+      println("\n")
     }
   }
 
   /** Test the Subtractive Clustering intermediate algorithm. */
-  def testChiuIntermediate(data: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(0.3, 0.15, 0.5, numPartitions, numPartitionsPerGroup)
+  def testChiuIntermediate(data: RDD[Vector], ra: Double) = {
+    val chiu = SubtractiveClustering(ra, 0.15, 0.5, numPartitions, numPartitionsPerGroup)
     val centers = chiu.chiuIntermediate(data)
 
     // Print results
-    println("\n\n--> NO. OF CENTERS: " + centers.length + "\n\n")
+    println("--> NO. OF CENTERS: " + centers.length)
     if (saveFile) {
       printToFile(outFile, centersToString(centers))
-      println("--> SAVED CENTERS TO FILE " + outFile + "\n\n")
+      println("--> SAVED CENTERS TO FILE " + outFile)
     }
     else {
-      println("--> CLUSTER CENTERS:\n" + centers + "\n\n")
+      println("--> CLUSTER CENTERS:\n")
+      centers.foreach(println)
+      println("\n")
     }
   }
 
@@ -127,25 +133,27 @@ object ClusteringTest {
     )
 
     // Print results
-    println("\n\n--> NO. OF CENTERS: " + fcmModel.c)
+    println("--> NO. OF CENTERS: " + fcmModel.c)
     println("--> LOSS: " + fcmModel.trainingLoss)
-    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter + "\n")
+    println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter)
     if (saveFile) {
       printToFile(outFile, centersToString(fcmModel.clusterCenters))
-      println("--> SAVED CENTERS TO FILE " + outFile + "\n\n")
+      println("--> SAVED CENTERS TO FILE " + outFile)
     }
     else {
       println("--> CLUSTER CENTERS:\n" +
-        fcmModel.clusterCenters.map ( _.toString ).mkString("\n") +
-        "\n\n")
+        fcmModel.clusterCenters.map ( _.toString ).mkString("\n") + "\n")
     }
 
     fcmModel
   }
 
   /** Test the Model Identification algorithm. */
-  def testModelIdentificationOutput(trainingData: RDD[Vector], testData: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(numPartitions)
+  def testModelIdentificationOutput(
+    trainingData: RDD[Vector],
+    testData: RDD[Vector],
+    ra: Double) = {
+    val chiu = SubtractiveClustering(numPartitions).setRadius(ra)
     val centers = chiu.chiuGlobal(trainingData)
 
     val output = ModelIdentification(centers, chiu.getRadius)
@@ -156,16 +164,17 @@ object ClusteringTest {
     for (o <- output) {
       println(o._1 + "," + o._2)
     }
-    println("\n\n")
+    println("\n")
   }
 
   /** Test the labelling algorithm based on Chiu's model identification. */
   def testModelIdentificationLabels(
     labeledTrainingData: RDD[(Vector, Double)],
-    testData: RDD[(Vector, Double)]) = {
+    testData: RDD[(Vector, Double)],
+    ra: Double) = {
     // Strip class labels for clustering
     val trainingData = labeledTrainingData.keys.cache()
-    val chiu = SubtractiveClustering(numPartitions)
+    val chiu = SubtractiveClustering(numPartitions).setRadius(ra)
     val centers = chiu.chiuGlobal(trainingData)
     val labels = centers.map { c =>
       labeledTrainingData.lookup(c).head
@@ -179,8 +188,8 @@ object ClusteringTest {
 
     // Classification error
     val testErr =
-      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
-    println("\n" + s"--> Chiu Test Error = $testErr" + "\n")
+      100.0 * labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println(s"--> Chiu Test Error = $testErr%")
   }
 
   /** Test FCM based classification algorithm. */
@@ -204,8 +213,8 @@ object ClusteringTest {
 
     // Classification error
     val testErr =
-      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
-    println("\n" + s"--> FCM Test Error = $testErr" + "\n")
+      100.0 * labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println(s"--> FCM Test Error = $testErr%")
   }
 
   /** Test Random Forest classification algorithm. */
@@ -234,8 +243,8 @@ object ClusteringTest {
 
     // Compute classification error
     val testErr =
-      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
-    println("\n" + s"--> RandomForest Test Error = $testErr" + "\n")
+      100.0 * labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println(s"--> RandomForest Test Error = $testErr%")
   }
 
   /** Test SVM classification algorithm. */
@@ -257,8 +266,8 @@ object ClusteringTest {
 
     // Compute classification error
     val testErr =
-      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
-    println("\n" + s"--> Logistic Test Error = $testErr" + "\n")
+      100.0 * labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println(s"--> Logistic Test Error = $testErr%")
   }
 
   /** Clustering examples with fuzzyspark. */
@@ -269,7 +278,7 @@ object ClusteringTest {
 
     // Get input file
     var trainingFile = args.headOption.getOrElse {
-      Console.err.println("\n\n--> NO TRAINING FILE PROVIDED. ABORTING...\n")
+      Console.err.println("--> NO TRAINING FILE PROVIDED. ABORTING...")
       sys.exit(1)
     }
     if (hdfs)
@@ -279,21 +288,26 @@ object ClusteringTest {
     val trainingInput = sc.textFile(trainingFile, numPartitions)
     val labeledTrainingData = trainingInput.map { line =>
       val x = Vectors.dense(line.split(",").map ( _.toDouble ))
-      (Vectors.dense(x.toArray.slice(0, x.size)), x(x.size - 1))
+      (Vectors.dense(x.toArray.slice(0, x.size - 1)), x(x.size - 1))
     }.cache()
+    val trainingData = labeledTrainingData.keys.cache()
 
     // Test file
     val testFile = if (hdfs) "file://" + args(1) else args(1)
     val testInput = sc.textFile(testFile, numPartitions)
     val testData = testInput.map { line =>
       val x = Vectors.dense(line.split(",").map ( _.toDouble ))
-      (Vectors.dense(x.toArray.slice(0, x.size)), x(x.size - 1))
+      (Vectors.dense(x.toArray.slice(0, x.size - 1)), x(x.size - 1))
     }.cache()
 
-    // Test functions
-    //testModelIdentificationLabels(labeledTrainingData, testData)
-    //testFCMLabels(labeledTrainingData, testData, 3)
-    //testRandomForestLabels(labeledTrainingData, testData, 3)
+    // Test clustering functions
+    //testChiuGlobal(trainingData, 1)
+    //testFuzzyCMeans(labeledTrainingData)
+
+    // Test classification functions
+    testModelIdentificationLabels(labeledTrainingData, testData, 1)
+    testFCMLabels(labeledTrainingData, testData, 3)
+    testRandomForestLabels(labeledTrainingData, testData, 3)
     testLogisticLabels(labeledTrainingData, testData, 3)
 
     // Stop spark
