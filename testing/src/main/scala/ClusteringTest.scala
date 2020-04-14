@@ -17,14 +17,18 @@
  * https://www.gnu.org/licenses/gpl-3.0.html.
  */
 
-import fuzzyspark.clustering.{FuzzyCMeans, SubtractiveClustering, ModelIdentification}
+import fuzzyspark.clustering.{FuzzyCMeans, FuzzyCMeansModel,
+  SubtractiveClustering, ModelIdentification}
 
 import java.io.File
 import java.io.PrintWriter
 import scala.io.Source
 import scala.math.sqrt
 
+import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.tree.RandomForest
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkContext, SparkConf}
 
@@ -32,7 +36,7 @@ object ClusteringTest {
 
   /** Configuration parameters. */
   val hdfs = true
-  val numPartitions = 13
+  val numPartitions = 5
   val numPartitionsPerGroup = 10
   val saveFile = true
   val outFile = "output/centers_norm.txt"
@@ -72,6 +76,8 @@ object ClusteringTest {
     else {
       println("--> CLUSTER CENTERS:\n" + centers + "\n\n")
     }
+
+    centers
   }
 
   /** Test the Subtractive Clustering local algorithm. */
@@ -109,28 +115,12 @@ object ClusteringTest {
     }
   }
 
-  /** Test the Model Identification algorithm. */
-  def testModelIdentification(trainingData: RDD[Vector], testData: RDD[Vector]) = {
-    val chiu = SubtractiveClustering(numPartitions)
-    val centers = chiu.chiuGlobal(trainingData)
-
-    val output = ModelIdentification(centers, chiu.getRadius, 1)
-      .predict(testData)
-      .collect()
-      .toArray
-    println("--> OUTPUT DATA:\n")
-    for (o <- output) {
-      println(o._1 + "," + o._2)
-    }
-    println("\n\n")
-  }
-
   /** Train a Fuzzy C Means model. */
-  def testFuzzyCMeans(data: RDD[Vector]) = {
+  def testFuzzyCMeans(labeledData: RDD[(Vector, Double)]): FuzzyCMeansModel = {
     val fcmModel = FuzzyCMeans.train(
-      data,
+      labeledData,
       initMode = FuzzyCMeans.RANDOM,
-      c = 100,
+      c = 3,
       numPartitions = numPartitions,
       chiuInstance =
         Option(SubtractiveClustering(numPartitions))
@@ -149,6 +139,126 @@ object ClusteringTest {
         fcmModel.clusterCenters.map ( _.toString ).mkString("\n") +
         "\n\n")
     }
+
+    fcmModel
+  }
+
+  /** Test the Model Identification algorithm. */
+  def testModelIdentificationOutput(trainingData: RDD[Vector], testData: RDD[Vector]) = {
+    val chiu = SubtractiveClustering(numPartitions)
+    val centers = chiu.chiuGlobal(trainingData)
+
+    val output = ModelIdentification(centers, chiu.getRadius)
+      .predictOutputRDD(testData)
+      .collect()
+      .toArray
+    println("--> INPUT, OUTPUT DATA:\n")
+    for (o <- output) {
+      println(o._1 + "," + o._2)
+    }
+    println("\n\n")
+  }
+
+  /** Test the labelling algorithm based on Chiu's model identification. */
+  def testModelIdentificationLabels(
+    labeledTrainingData: RDD[(Vector, Double)],
+    testData: RDD[(Vector, Double)]) = {
+    // Strip class labels for clustering
+    val trainingData = labeledTrainingData.keys.cache()
+    val chiu = SubtractiveClustering(numPartitions)
+    val centers = chiu.chiuGlobal(trainingData)
+    val labels = centers.map { c =>
+      labeledTrainingData.lookup(c).head
+    }
+
+    // Prediction
+    val model = ModelIdentification(centers, chiu.getRadius, Option(labels))
+    val labelAndPreds = testData.map { case (x, l) =>
+      (l, model.predictLabel(x))
+    }
+
+    // Classification error
+    val testErr =
+      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println("\n" + s"--> Chiu Test Error = $testErr" + "\n")
+  }
+
+  /** Test FCM based classification algorithm. */
+  def testFCMLabels(
+    labeledTrainingData: RDD[(Vector, Double)],
+    testData: RDD[(Vector, Double)],
+    numClasses: Int) = {
+    // Strip class labels for clustering
+    val trainingData = labeledTrainingData.keys.cache()
+    val model = FuzzyCMeans.train(
+      labeledTrainingData,
+      initMode = FuzzyCMeans.RANDOM,
+      c = numClasses,
+      numPartitions = numPartitions,
+      classification = true)
+
+    // Prediction
+    val labelAndPreds = testData.map { case (x, l) =>
+      (l, model.predict(x))
+    }
+
+    // Classification error
+    val testErr =
+      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println("\n" + s"--> FCM Test Error = $testErr" + "\n")
+  }
+
+  /** Test Random Forest classification algorithm. */
+  def testRandomForestLabels(
+    labeledTrainingData: RDD[(Vector, Double)],
+    testData: RDD[(Vector, Double)],
+    numClasses: Int) = {
+    val trainingData = labeledTrainingData.map { case (x, l) => LabeledPoint(l, x) }.cache()
+    val numClasses = 3
+    val categoricalFeaturesInfo = Map[Int, Int]()  // All features are continuous.
+    val numTrees = 20
+    val featureSubsetStrategy = "auto" // Let the algorithm choose.
+    val impurity = "gini"
+    val maxDepth = 4
+    val maxBins = 32
+
+    // Train RandomForest model
+    val model = RandomForest.trainClassifier(
+      trainingData, numClasses, categoricalFeaturesInfo,
+      numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
+
+    // Evaluate model on test instances
+    val labelAndPreds = testData.map { case (x, l) =>
+      (l, model.predict(x))
+    }
+
+    // Compute classification error
+    val testErr =
+      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println("\n" + s"--> RandomForest Test Error = $testErr" + "\n")
+  }
+
+  /** Test SVM classification algorithm. */
+  def testLogisticLabels(
+    labeledTrainingData: RDD[(Vector, Double)],
+    testData: RDD[(Vector, Double)],
+    numClasses: Int) = {
+    val trainingData = labeledTrainingData.map { case (x, l) => LabeledPoint(l, x) }.cache()
+
+    // Run training algorithm to build the model
+    val model = new LogisticRegressionWithLBFGS()
+      .setNumClasses(numClasses)
+      .run(trainingData)
+
+    // Evaluate model on test instances
+    val labelAndPreds = testData.map { case (x, l) =>
+      (l, model.predict(x))
+    }
+
+    // Compute classification error
+    val testErr =
+      labelAndPreds.filter ( r => r._1 != r._2 ).count.toDouble / testData.count()
+    println("\n" + s"--> Logistic Test Error = $testErr" + "\n")
   }
 
   /** Clustering examples with fuzzyspark. */
@@ -158,34 +268,35 @@ object ClusteringTest {
     val sc = new SparkContext(conf)
 
     // Get input file
-    var inputFile = args.headOption.getOrElse {
-      Console.err.println("\n\n--> NO INPUT FILE PROVIDED. ABORTING...\n")
+    var trainingFile = args.headOption.getOrElse {
+      Console.err.println("\n\n--> NO TRAINING FILE PROVIDED. ABORTING...\n")
       sys.exit(1)
     }
     if (hdfs)
-      inputFile = "file://" + inputFile
+      trainingFile = "file://" + trainingFile
 
-    // Load data into RDD with specified number of partitions
-    val input = sc.textFile(inputFile, numPartitions)
-    val data = input.map { line =>
-      Vectors.dense(line.split(",").map ( _.toDouble ))
+    // Load labeled training data into RDD with specified number of partitions
+    val trainingInput = sc.textFile(trainingFile, numPartitions)
+    val labeledTrainingData = trainingInput.map { line =>
+      val x = Vectors.dense(line.split(",").map ( _.toDouble ))
+      (Vectors.dense(x.toArray.slice(0, x.size)), x(x.size - 1))
     }.cache()
 
-    // Test clustering functions
-    //testChiuGlobal(data)
-    //testChiuLocal(data)
-    //testChiuIntermediate(data)
-    //testFuzzyCMeans(data)
-
-    // Test model identification
-    val testInput = sc.textFile("file:///home/acoin/fuzzyspark/testing/test_data.txt", numPartitions)
+    // Test file
+    val testFile = if (hdfs) "file://" + args(1) else args(1)
+    val testInput = sc.textFile(testFile, numPartitions)
     val testData = testInput.map { line =>
-      Vectors.dense(line.split(",").map ( _.toDouble ))
+      val x = Vectors.dense(line.split(",").map ( _.toDouble ))
+      (Vectors.dense(x.toArray.slice(0, x.size)), x(x.size - 1))
     }.cache()
-    testModelIdentification(data, testData)
+
+    // Test functions
+    //testModelIdentificationLabels(labeledTrainingData, testData)
+    //testFCMLabels(labeledTrainingData, testData, 3)
+    //testRandomForestLabels(labeledTrainingData, testData, 3)
+    testLogisticLabels(labeledTrainingData, testData, 3)
 
     // Stop spark
-    data.unpersist()
     sc.stop()
   }
 }

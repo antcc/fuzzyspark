@@ -22,7 +22,6 @@ package fuzzyspark.clustering
 import scala.util.Random
 import scala.math.{abs => fabs, pow, sqrt}
 
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
 
@@ -191,11 +190,16 @@ private class FuzzyCMeans(
 
   /**
    * Train a Fuzzy C Means model on the given set of points.
+   * If the data is pre-labeled, it creates a model that can
+   * be used for classification tasks.
    *
-   * @note The RDD `data` should be cached for high performance,
+   * @note The RDD `labeledData` should be cached for high performance,
    * since this is an iterative algorithm.
    */
-  def run(data: RDD[Vector]): FuzzyCMeansModel = {
+  def run(
+    labeledData: RDD[(Vector, Double)],
+    classification: Boolean): FuzzyCMeansModel = {
+    val data = labeledData.keys.cache()
     val sc = data.sparkContext
 
     // Compute initial centers
@@ -225,11 +229,13 @@ private class FuzzyCMeans(
 
     // Compute initial membership matrix and loss
     var centersBroadcast = sc.broadcast(centers)
-    var u = data.map ( computeRow(_, centersBroadcast, m) )
-    if (numPartitions > data.getNumPartitions) {
+    var u = labeledData.map { case (x, l) =>
+      ((x, l), computeRow(x, centersBroadcast.value, m))
+    }
+    if (numPartitions > labeledData.getNumPartitions) {
       u = u.repartition(numPartitions).cache()
     }
-    else if (numPartitions < data.getNumPartitions) {
+    else if (numPartitions < labeledData.getNumPartitions) {
       u = u.coalesce(numPartitions).cache()
     }
     else {
@@ -243,7 +249,7 @@ private class FuzzyCMeans(
       // Update centers
       var centersWithIndex = centers.zipWithIndex
       for ((c, j) <- centersWithIndex) {
-        var sums = u.map { case (x, r) =>
+        var sums = u.map { case ((x, l), r) =>
           (multiply(x, pow(r(j), m)), pow(r(j), m))
         }.reduce { case (t, s) =>
           (add(t._1, s._1), t._2 + s._2)
@@ -255,14 +261,23 @@ private class FuzzyCMeans(
 
       // Update membership matrix
       uOld = u
-      u = uOld.map { case (x, r) => computeRow(x, centersBroadcast, m) }.cache()
+      u = uOld.map { case ((x, l), _) =>
+        ((x, l), computeRow(x, centersBroadcast.value, m))
+      }.cache()
 
       // Increase iteration count
       iter += 1
 
     } while (iter < maxIter && !stoppingCondition(uOld, u))
 
-    FuzzyCMeansModel(centers, m, computeLoss(u, centersBroadcast, m), iter)
+    var labelsCenters: Option[Array[Double]] = None
+    if (classification)
+      labelsCenters = Option(computeCentersLabels(centersBroadcast.value, u))
+
+    FuzzyCMeansModel(
+      centers, m,
+      computeLoss(u, centersBroadcast.value, m),
+      iter, labelsCenters)
   }
 
   /**
@@ -274,14 +289,49 @@ private class FuzzyCMeans(
    * no greater than `epsilon`.
    */
   private def stoppingCondition(
-    old: RDD[(Vector, Vector)],
-    curr: RDD[(Vector, Vector)]): Boolean = {
-    val diff = old.join(curr).map { case (x, (u, v)) =>
+    old: RDD[((Vector, Double), Vector)],
+    curr: RDD[((Vector, Double), Vector)]): Boolean = {
+    val diff = old.join(curr).map { case (_, (u, v)) =>
         val t = abs(subtract(v, u))
         t(t.argmax)
     }.max()
 
     diff < epsilon
+  }
+
+  /**
+   * Assign a label to each cluster center.
+   *
+   * For a particular center point, we consider the membership
+   * of each data point to it and perform an alpha-cut at 0.6.
+   * Of the remaining points, we compute the predominant class,
+   * and thus assign that label to the center in question.
+   *
+   * @param centers Cluster centers found
+   * @param u Membership matrix associated with the labeled data points a
+   * and the centers
+   */
+  private def computeCentersLabels(
+    centers: Array[Vector],
+    u: RDD[((Vector, Double), Vector)]): Array[Double] = {
+    val alpha = 0.6
+
+    // Count relevant labels for each cluster center
+    val labelsCount = u.flatMap { case ((x, l), r) =>
+      r.toArray.zipWithIndex.map { case (mu, i) =>
+        ((l, i), if (mu > alpha) 1 else 0)
+      }
+    }.reduceByKey ( _ + _ )
+
+    // Choose the predominant class for each center
+    val c = centers.size
+    val labels = Array.ofDim[Double](c)
+    for (i <- 0 until c) {
+      labels(i) = labelsCount.filter ( _._1._2 == i )
+        .max()(Ordering[Int].on ( _._2 ))._1._1
+    }
+
+    labels
   }
 
   /**
@@ -312,7 +362,7 @@ object FuzzyCMeans {
   /**
    * Train a Fuzzy C Means model using specified parameters.
    *
-   * @param data Training points as an `RDD` of `Vector` types.
+   * @param labeledData Labeled training points.
    * @param initMode The initialization algorithm.
    * @param numPartitions Desired number of partitions.
    * @param c Number of clusters to create.
@@ -322,9 +372,10 @@ object FuzzyCMeans {
    * @param epsilon Tolerance for stopping condition.
    * @param maxIter Maximum number of iterations allowed.
    * @param seed Seed for randomness.
+   * @param classification Whether to prepare labels for classification.
    */
   def train(
-    data: RDD[Vector],
+    labeledData: RDD[(Vector, Double)],
     initMode: String,
     numPartitions: Int,
     c: Int = 0,
@@ -333,7 +384,8 @@ object FuzzyCMeans {
     m: Int = 2,
     epsilon: Double = 1e-6,
     maxIter: Int = 100,
-    seed: Long = Random.nextLong): FuzzyCMeansModel = {
+    seed: Long = Random.nextLong,
+    classification: Boolean = false): FuzzyCMeansModel = {
     new FuzzyCMeans(
       initMode,
       numPartitions,
@@ -343,7 +395,7 @@ object FuzzyCMeans {
       m,
       epsilon,
       maxIter,
-      seed).run(data)
+      seed).run(labeledData, classification)
   }
 
   /**
@@ -357,15 +409,15 @@ object FuzzyCMeans {
    */
   private[clustering] def computeRow(
     x: Vector,
-    centers: Broadcast[Array[Vector]],
+    centers: Array[Vector],
     m: Int) = {
-    val c = centers.value.length
+    val c = centers.length
     val membership = Array.ofDim[Double](c)
 
     for (j <- 0 until c) {
-      val denom = centers.value.map { ck =>
+      val denom = centers.map { ck =>
         pow(
-          sqrt(Vectors.sqdist(x, centers.value(j))) / sqrt(Vectors.sqdist(x, ck)),
+          sqrt(Vectors.sqdist(x, centers(j))) / sqrt(Vectors.sqdist(x, ck)),
           2.0 / (m - 1))
       }.sum
 
@@ -377,7 +429,7 @@ object FuzzyCMeans {
         membership(j) = 1.0 / denom
     }
 
-    (x, Vectors.dense(membership))
+    Vectors.dense(membership)
   }
 
   /**
@@ -385,11 +437,11 @@ object FuzzyCMeans {
    * with fuzziness degree `m`.
    */
   private[clustering] def computeLoss(
-    u: RDD[(Vector, Vector)],
-    centers: Broadcast[Array[Vector]],
+    u: RDD[((Vector, Double), Vector)],
+    centers: Array[Vector],
     m: Int) = {
-    u.map { case (x, r) =>
-      r.toArray.zip(centers.value).map { case (e, c) =>
+    u.map { case ((x, _), r) =>
+      r.toArray.zip(centers).map { case (e, c) =>
         pow(e, m) * Vectors.sqdist(x, c)
       }.sum
     }.sum

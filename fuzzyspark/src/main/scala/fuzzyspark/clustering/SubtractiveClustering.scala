@@ -243,21 +243,6 @@ class SubtractiveClustering(
     val localCenters = localCentersIndexed.map ( _._2 )
     val numCenters = localCenters.size
 
-    // Refine centers with Fuzzy C Means for a few iterations, using all the data
-    /**val fcmModel = FuzzyCMeans.train(
-      data,
-      initMode = FuzzyCMeans.PROVIDED,
-      numPartitions = numPartitions,
-      initCenters = Option(localCenters),
-      maxIter = 10
-    )
-
-    // Update indexed centers
-    // NOTE: we don't change the potential even though the centers might have changed
-    localCentersIndexed = localCentersIndexed.zipWithIndex.map {
-      case ((p, _, d), i) => (p, fcmModel.clusterCenters(i), d)
-    }*/
-
     // Group centers every few partitions
     var centersPotential = List[Array[(Vector, Double)]]()
     for (i <- 0 until numPartitions by numPartitionsPerGroup) {

@@ -35,7 +35,7 @@ import org.apache.spark.rdd.RDD
 class ModelIdentification(
   var centers: Array[Vector],
   var ra: Double,
-  var inputDims: Int
+  var labels: Option[Array[Double]]
 ) extends Serializable {
 
   /** Rest of algorithm parameters */
@@ -45,20 +45,49 @@ class ModelIdentification(
   /** Get learned centroids for this model. */
   def getCenters: Array[Vector] = centers
 
+  /** Get centroid labels. */
+  def getLabels: Option[Array[Double]] = labels
+
+  /** Set centroids labels. */
+  def setLabels(labels: Array[Double]): this.type = {
+    this.labels = Option(labels)
+    this
+  }
+
   /** Get effective neighbourhood radius. */
   def getRadius: Double = ra
 
-  /** Get number of input dimensions for this model. */
-  def getInputDims: Int = inputDims
+  /** Predict output values for an input vector. */
+  def predictOutput(y: Vector): Vector = {
+    val inputDims = y.size
+    val outputDims = dims - inputDims
+
+    // Compute degree of membership of input vector to each cluster
+    val membership = centers.map { c =>
+      val inputSlice = Vectors.dense(c.toArray.slice(0, inputDims))
+      exp(-alpha * Vectors.sqdist(y, inputSlice))
+    }
+
+    // Compute output values
+    var z = centers.zip(membership).map { case (c, mu) =>
+      val outputSlice = Vectors.dense(c.toArray.slice(inputDims, dims))
+      VectorUtils.multiply(outputSlice, mu)
+    }.reduce ( VectorUtils.add )
+
+    VectorUtils.divide(z, membership.sum)
+  }
 
   /**
-   * Predict output values from  a collection of input vectors.
+   * Predict output values from a collection of input vectors,
+   * taking the first `inputDims` dimensions to be the input
+   * space on the cluster centers, and the rest to be the output space.
    *
    * @return An RDD of pairs (input, output).
    */
-  def predict(input: RDD[Vector]): RDD[(Vector, Vector)] = {
+  def predictOutputRDD(input: RDD[Vector]): RDD[(Vector, Vector)] = {
+    val inputDims = input.take(1).size
     val outputDims = dims - inputDims
-    var centersBroadcast = input.sparkContext.broadcast(centers)
+    val centersBroadcast = input.sparkContext.broadcast(centers)
 
     // Compute output values for each input vector
     val output = input.map { y =>
@@ -82,6 +111,33 @@ class ModelIdentification(
 
     output
   }
+
+  /** Predict label for a single point. */
+  def predictLabel(x: Vector): Double = {
+    require(
+      labels.exists( _.size == centers.size ),
+      s"Each cluster center must have a label.")
+
+    val membership = Vectors.dense(
+      centers.map ( c => exp(-alpha * Vectors.sqdist(x, c)) ))
+    labels.get(membership.argmax)
+  }
+
+  /** Predict labels for unseen data points. */
+  def predictLabelsRDD(input: RDD[Vector]): RDD[(Vector, Double)] = {
+    require(
+      labels.exists( _.size == centers.size ),
+      s"Each cluster center must have a label.")
+
+    val centersBroadcast = input.sparkContext.broadcast(centers)
+    val output = input.map { x =>
+      val membership = Vectors.dense(
+        centersBroadcast.value.map ( c => exp(-alpha * Vectors.sqdist(x, c)) ))
+      (x, labels.get(membership.argmax))
+    }
+
+    output
+  }
 }
 
 /** Top-level Model Identification methods. */
@@ -92,14 +148,14 @@ object ModelIdentification {
    *
    * @param centers Cluster centers obtained from subtractive clustering.
    * @param ra Neighbourhood radius.
-   * @param inputDims Number of input dimensions.
+   * @param labels Labels for cluster centers
    */
   def apply(
     centers: Array[Vector],
     ra: Double,
-    inputDims: Int): ModelIdentification =
+    labels: Option[Array[Double]] = None): ModelIdentification =
     new ModelIdentification(
       centers,
       ra,
-      inputDims)
+      labels)
 }

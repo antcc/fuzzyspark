@@ -27,27 +27,64 @@ class FuzzyCMeansModel(
   var clusterCenters: Array[Vector],
   var m: Int,
   var trainingLoss: Double,
-  var trainingIter: Int
+  var trainingIter: Int,
+  var labels: Option[Array[Double]]
 ) extends Serializable {
+
+  /** Get centroid labels. */
+  def getLabels: Option[Array[Double]] = labels
+
+  /** Set centroids labels. */
+  def setLabels(labels: Array[Double]): this.type = {
+    this.labels = Option(labels)
+    this
+  }
 
   /** Number of cluster centers. */
   def c: Int = clusterCenters.length
 
   /** Compute loss function using given data. */
   def computeLoss(data: RDD[Vector]): Double = {
-    val sc = data.sparkContext
+    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
     val u = membershipMatrix(data)
-    FuzzyCMeans.computeLoss(u, sc.broadcast(clusterCenters), m)
+    FuzzyCMeans.computeLoss(u, centersBroadcast.value, m)
   }
 
   /** Compute fuzzy membership matrix for given data. */
   private def membershipMatrix(data: RDD[Vector]) = {
-    val sc = data.sparkContext
-    data.map ( FuzzyCMeans.computeRow(_, sc.broadcast(clusterCenters), m) )
+    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
+    // Label 0 as a placeholder
+    data.map ( x => ((x, 0.0), FuzzyCMeans.computeRow(x, centersBroadcast.value, m)) )
   }
 
-  // TODO: predict and fuzzyPredict (by point and by RDD)
-  // TODO: fuzzy partition coefficient (https://github.com/scikit-fuzzy/scikit-fuzzy/blob/master/skfuzzy/cluster/_cmeans.py#L101)
+  /**
+   * Predict point label
+   *
+   */
+  def predict(x: Vector): Double = {
+    require(
+      labels.exists( _.size == clusterCenters.size ),
+      s"Each cluster center must have a label.")
+
+    val index = FuzzyCMeans.computeRow(x, clusterCenters, m).argmax
+    labels.get(index)
+  }
+
+  /**
+   * Predict labels for unseen data using FCM
+   * membership function.
+   */
+  def predictRDD(data: RDD[Vector]): RDD[(Vector, Double)] = {
+    require(
+      labels.exists( _.size == clusterCenters.size ),
+      s"Each cluster center must have a label.")
+
+    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
+    data.map { x =>
+      val index = FuzzyCMeans.computeRow(x, centersBroadcast.value, m).argmax
+      (x, labels.get(index))
+    }
+  }
 }
 
 /** Factory for [[fuzzyspark.clustering.FuzzyCMeansModel]] instances. */
@@ -58,8 +95,9 @@ object FuzzyCMeansModel {
     clusterCenters: Array[Vector],
     m: Int,
     trainingLoss: Double,
-    trainingIter: Int): FuzzyCMeansModel = {
-    new FuzzyCMeansModel(clusterCenters, m, trainingLoss, trainingIter)
+    trainingIter: Int,
+    labels: Option[Array[Double]] = None): FuzzyCMeansModel = {
+    new FuzzyCMeansModel(clusterCenters, m, trainingLoss, trainingIter, labels)
   }
 
   /**
@@ -67,8 +105,11 @@ object FuzzyCMeansModel {
    * fuzziness degree. A value of 0 for trainingLoss and trainingIter
    * means that the model hasn't been trained.
    */
-  def apply(clusterCenters: Array[Vector], m: Int): FuzzyCMeansModel = {
-    new FuzzyCMeansModel(clusterCenters, m, 0.0, 0)
+  def apply(
+    clusterCenters: Array[Vector],
+    m: Int,
+    labels: Option[Array[Double]]): FuzzyCMeansModel = {
+    new FuzzyCMeansModel(clusterCenters, m, 0.0, 0, labels)
   }
 
   //TODO: load and save model
