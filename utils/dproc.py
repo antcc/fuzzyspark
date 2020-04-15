@@ -24,7 +24,8 @@ import numpy as np
 import sys
 
 L = 1        # Normalize to interval [-L, L]
-DELIM = ' '  # Dimension delimiter in input file
+DELIM = ','  # Dimension delimiter in input file
+LABELS = True
 
 def print_data(data):
     """Print data in the same format as the input data."""
@@ -35,18 +36,21 @@ def print_data(data):
             print(str(data[i, j]) + ("," if j != ncols - 1 else ""), end = "")
         print("")
 
-def compute_range(data, ncols):
+def compute_range(data, ncols, labels):
     """ Compute min and max values in every dimension."""
-
-    min_cols = [data[:, j].min() for j in range(ncols)]
-    max_cols = [data[:, j].max() for j in range(ncols)]
+    
+    cols = ncols - 1 if labels else ncols   
+    min_cols = [data[:, j].min() for j in range(cols)]
+    max_cols = [data[:, j].max() for j in range(cols)]
 
     return np.array([min_cols, max_cols])
 
-def norm(data, nrows, ncols, range_cols):
+def norm(data, nrows, ncols, range_cols, labels):
     """Normalize data to [-L, L] from original values."""
 
-    for j in range(ncols):
+    cols = ncols - 1 if labels else ncols
+
+    for j in range(cols):
         min = range_cols[0, j]
         max = range_cols[1, j]
 
@@ -57,10 +61,12 @@ def norm(data, nrows, ncols, range_cols):
             for i in range(nrows):
                 data[i, j] = - L + ((data[i, j] - min) * (2 * L)) / (max - min)
 
-def denorm(data, nrows, ncols, range_cols):
+def denorm(data, nrows, ncols, range_colsi, labels):
     """Denormalize data from [-L, L] to original values."""
 
-    for j in range(ncols):
+    cols = ncols - 1 if labels else ncols
+
+    for j in range(cols):
         min = range_cols[0, j]
         max = range_cols[1, j]
 
@@ -83,7 +89,7 @@ def main():
             sys.exit(1)
 
         range_cols = np.genfromtxt(sys.argv[3], delimiter=',')
-        norm(data, nrows, ncols, range_cols)
+        norm(data, nrows, ncols, range_cols, labels = LABELS)
         print_data(data)
 
     elif (sys.argv[1] == "--denorm"):
@@ -92,11 +98,11 @@ def main():
             sys.exit(1)
 
         range_cols = np.genfromtxt(sys.argv[3], delimiter=',')
-        denorm(data, nrows, ncols, range_cols)
+        denorm(data, nrows, ncols, range_cols, labels = LABELS)
         print_data(data)
 
     elif (sys.argv[1] == "--range"):
-        print_data(compute_range(data, ncols))
+        print_data(compute_range(data, ncols, labels = LABELS))
 
     else:
         print("use: ./dproc.py [--norm, --denorm, --range] DATA [DATA_RANGE]")
