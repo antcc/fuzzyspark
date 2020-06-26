@@ -103,7 +103,7 @@ object FuzzyCMeansModel {
   /**
    * Construct a FuzzyCMeansModel from given cluster centers and
    * fuzziness degree. A value of 0 for trainingLoss and trainingIter
-   * means that the model hasn't been trained.
+   * means that the model training history is unknown.
    */
   def apply(
     clusterCenters: Array[Vector],

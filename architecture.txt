@@ -1,0 +1,19 @@
+ULISES
+-------
+
+20 nodos
+12 cores/nodo
+64GB/nodo (Útiles: 55GB)
+
+Parámetros a configurar:
+
+--num-executors 43 (si hay un nodo caído, son 37)
+--executor-cores 5
+--executor-memory 25g (mejor menos)
+
+--conf spark.executor.heartbeatInterval=20s
+--conf spark.executor.memoryOverhead=3g
+--conf spark.driver.memoryOverhead=3g
+--conf spark.network.timeout=800s
+--conf spark.executor.extraJavaOptions=-XX:+UseG1GC
+--conf spark.sql.autoBroadcastJoinThreshold=-1

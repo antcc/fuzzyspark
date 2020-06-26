@@ -19,8 +19,9 @@
 
 package fuzzyspark.clustering
 
+import fuzzyspark.VectorUtils
 import scala.util.Random
-import scala.math.{abs => fabs, pow, sqrt}
+import scala.math.{pow, sqrt}
 
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
@@ -35,6 +36,7 @@ private class FuzzyCMeans(
   private var initMode: String,
   private var numPartitions: Int,
   private var c: Int,
+  private var alpha:Double,
   private var initCenters: Option[Array[Vector]],
   private var chiuInstance: Option[SubtractiveClustering],
   private var m: Int,
@@ -48,12 +50,12 @@ private class FuzzyCMeans(
 
   /**
    * Constructs a FuzzyCMeans instance with default parameters:
-   *   { c = 3, initMode = RANDOM, initCenters = None,
-   *     chiuInstance = None, m = 2, epsilon = 1e-6,
-   *     maxIter = 100, seed = random }
+   *   { c = 3, alpha = 0.5, initMode = RANDOM,
+   *     initCenters = None, chiuInstance = None,
+   *     m = 2, epsilon = 1e-3, maxIter = 100, seed = random }
    */
   def this(numPartitions: Int) =
-    this(FuzzyCMeans.RANDOM, numPartitions, 3, None, None, 2, 1e-6, 100, Random.nextLong)
+    this(FuzzyCMeans.RANDOM, numPartitions, 3, 0.5, None, None, 2, 1e-3, 100, Random.nextLong)
 
   /** Initialization mode. */
   def getInitMode: String = initMode
@@ -104,6 +106,18 @@ private class FuzzyCMeans(
       c >= 0,
       s"Number of clusters must be nonnegative but got ${c}.")
     this.c = c
+    this
+  }
+
+  /** Threshold for alpha-cut. */
+  def getAlpha: Double = alpha
+
+  /** Set threshold for alpha-cut in classification. */
+  def setAlpha(alpha: Double): this.type = {
+    require(
+      alpha >= 0 && alpha <= 1,
+      s"Alpha must be in [0,1] but got ${alpha}.")
+    this.alpha = alpha
     this
   }
 
@@ -249,7 +263,7 @@ private class FuzzyCMeans(
       // Update centers
       var centersWithIndex = centers.zipWithIndex
       for ((c, j) <- centersWithIndex) {
-        var sums = u.map { case ((x, l), r) =>
+        var sums = u.map { case ((x, _), r) =>
           (multiply(x, pow(r(j), m)), pow(r(j), m))
         }.reduce { case (t, s) =>
           (add(t._1, s._1), t._2 + s._2)
@@ -265,8 +279,15 @@ private class FuzzyCMeans(
         ((x, l), computeRow(x, centersBroadcast.value, m))
       }.cache()
 
+      if (iter % 30 == 0) {
+        u.checkpoint()
+        u.count()
+      }
+
       // Increase iteration count
       iter += 1
+      if (iter % 10 == 0)
+        println("[FCM] Iteration #" + iter)
 
     } while (iter < maxIter && !stoppingCondition(uOld, u))
 
@@ -291,7 +312,7 @@ private class FuzzyCMeans(
   private def stoppingCondition(
     old: RDD[((Vector, Double), Vector)],
     curr: RDD[((Vector, Double), Vector)]): Boolean = {
-    val diff = old.join(curr).map { case (_, (u, v)) =>
+    val diff = old.join(curr).map { case ((_, _), (u, v)) =>
         val t = abs(subtract(v, u))
         t(t.argmax)
     }.max()
@@ -314,7 +335,6 @@ private class FuzzyCMeans(
   private def computeCentersLabels(
     centers: Array[Vector],
     u: RDD[((Vector, Double), Vector)]): Array[Double] = {
-    val alpha = 0.6
 
     // Count relevant labels for each cluster center
     val labelsCount = u.flatMap { case ((x, l), r) =>
@@ -366,6 +386,7 @@ object FuzzyCMeans {
    * @param initMode The initialization algorithm.
    * @param numPartitions Desired number of partitions.
    * @param c Number of clusters to create.
+   * @param alpha Threshold for alpha-cut in classification
    * @param initCenters Initial cluster centers.
    * @param chiuInstance Instance of SubtractiveClustering.
    * @param m Fuzziness degree.
@@ -379,10 +400,11 @@ object FuzzyCMeans {
     initMode: String,
     numPartitions: Int,
     c: Int = 0,
+    alpha: Double = 0.5,
     initCenters: Option[Array[Vector]] = None,
     chiuInstance: Option[SubtractiveClustering] = None,
     m: Int = 2,
-    epsilon: Double = 1e-6,
+    epsilon: Double = 1e-3,
     maxIter: Int = 100,
     seed: Long = Random.nextLong,
     classification: Boolean = false): FuzzyCMeansModel = {
@@ -390,6 +412,7 @@ object FuzzyCMeans {
       initMode,
       numPartitions,
       c,
+      alpha,
       initCenters,
       chiuInstance,
       m,
@@ -445,45 +468,5 @@ object FuzzyCMeans {
         pow(e, m) * Vectors.sqdist(x, c)
       }.sum
     }.sum
-  }
-}
-
-/** Utility methods for basic operations with Vector type. */
-private[clustering] object VectorUtils {
-
-  import breeze.linalg.{DenseVector => BreezeVector}
-
-  /** Element-wise sum of two vectors. */
-  def add(x: Vector, y: Vector) = {
-    var bx = new BreezeVector(x.toArray)
-    var by = new BreezeVector(y.toArray)
-    Vectors.dense((bx + by).toArray)
-  }
-
-  /** Element-wise subtraction of two vectors. */
-  def subtract(x: Vector, y: Vector) = {
-    var bx = new BreezeVector(x.toArray)
-    var by = new BreezeVector(y.toArray)
-    Vectors.dense((bx - by).toArray)
-  }
-
-  /** Product of every value of a vector with a scalar. */
-  def multiply(x: Vector, l: Double) = {
-    var bx = new BreezeVector(x.toArray)
-    Vectors.dense((bx * l).toArray)
-  }
-
-  /** Division of every value of a vector with a scalar. */
-  def divide(x: Vector, l: Double) = {
-    require(
-      l != 0,
-      s"Scalar value to divide must be nonzero.")
-    var bx = new BreezeVector(x.toArray)
-    Vectors.dense((bx / l).toArray)
-  }
-
-  /** Element-wise absolute value of a vector. */
-  def abs(x: Vector) = {
-    Vectors.dense(x.toArray.map ( l => fabs(l) ))
   }
 }

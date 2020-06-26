@@ -19,6 +19,8 @@
 
 package fuzzyspark.clustering
 
+import fuzzyspark.VectorUtils
+
 import scala.math.{exp, pow}
 
 import org.apache.spark.mllib.linalg.{Vector, Vectors}

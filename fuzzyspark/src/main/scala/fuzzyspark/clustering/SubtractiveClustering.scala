@@ -19,7 +19,7 @@
 
 package fuzzyspark.clustering
 
-import scala.math.{exp, pow, sqrt}
+import scala.math.{exp, pow, sqrt, min}
 
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
@@ -34,23 +34,31 @@ import org.apache.spark.rdd.RDD
  */
 class SubtractiveClustering(
   private var ra: Double,
+  private var rb: Double,
   var lowerBound: Double,
   var upperBound: Double,
   var numPartitions: Int,
-  var numPartitionsPerGroup: Int
+  var numPartitionsPerGroup: Int,
+  private var raGlobal: Double,
+  private var rbGlobal: Double,
+  var lowerBoundGlobal: Double,
+  var upperBoundGlobal: Double
 ) extends Serializable {
 
   /** Rest of algorithm parameters. */
-  private var rb = 1.5 * ra
   private var alpha = 4 / (ra * ra)
   private var beta = 4 / (rb * rb)
+  private val PARTITION_SIZE = 1000
 
   /**
    * Construct object with default parameters:
-   *   { ra = 0.3, lowerBound = 0.15,
-   *     upperBound = 0.5, numPartitionsPerGroup = numPartitions / 2 }
+   *   { ra = 0.3, rb = 0.45, lowerBound = 0.15,
+   *     upperBound = 0.5, numPartitionsPerGroup = numPartitions / 2,
+   *     raGlobal = 0.3, rbGlobal = 0.45, lowerBoundGlobal = 0.15,
+   *     upperBoundGlobal = 0.5 }
    */
-  def this(numPartitions: Int) = this(0.3, 0.15, 0.5, numPartitions, numPartitions / 2)
+  def this(numPartitions: Int) =
+    this(0.3, 0.45, 0.15, 0.5, numPartitions, numPartitions / 2, 0.3, 0.45, 0.15, 0.5)
 
   /** Neighbourhood radius. */
   def getRadius: Double = ra
@@ -61,11 +69,25 @@ class SubtractiveClustering(
    */
   def setRadius(ra: Double): this.type = {
     this.ra = ra
-    this.rb = 1.5 * ra
     this.alpha = 4 / (ra * ra)
+    this
+  }
+
+  /** Potential-dropping neighbourhood radius. */
+  def getRb: Double = rb
+
+  /**
+   * Set potential-dropping neighbourhood radius and modify the rest
+   * of the parameters accordingly.
+   */
+  def setRb(rb: Double): this.type = {
+    this.rb = rb
     this.beta = 4 / (rb * rb)
     this
   }
+
+  /** Neighbourhood radius for global stage of intermediate version. */
+  def getRadiusGlobal: Double = raGlobal
 
   /**
    * Get cluster centers applying the global version of the
@@ -79,7 +101,7 @@ class SubtractiveClustering(
     var centers = List[Vector]()
 
     // Compute initial potential
-    var potential = initPotential.getOrElse(initPotentialRDD(data))
+    var potential = initPotential.getOrElse(initPotentialRDD(data)).cache()
 
     // Compute initial center
     var chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
@@ -90,12 +112,18 @@ class SubtractiveClustering(
 
     // Main loop of the algorithm
     var stop = false
+    var it = 0
     while (!stop) {
       // Revise potential of points
       potential = potential.map { case (x, p) =>
         (x, p - chosenPotential *
           exp(-beta * Vectors.sqdist(x, chosenCenter)))
       }.cache()
+
+      if (it % 30 == 0) {
+        potential.checkpoint()
+        potential.count()
+      }
 
       // Find new center
       chosenTuple = potential.max()(Ordering[Double].on ( _._2 ))
@@ -143,6 +171,9 @@ class SubtractiveClustering(
           }
         }
       }
+
+      it = it + 1
+      //println("[ChiuGlobal] Added center #" + it + " with potential " + chosenPotential)
     }
 
     centers.toArray
@@ -240,34 +271,45 @@ class SubtractiveClustering(
     var localCentersIndexed = data.mapPartitionsWithIndex ( chiuLocal )
       .collect()
       .toArray
-    val localCenters = localCentersIndexed.map ( _._2 )
-    val numCenters = localCenters.size
+
+    //println("[ChiuLocal] Total no. of centers: " + localCentersIndexed.size)
 
     // Group centers every few partitions
     var centersPotential = List[Array[(Vector, Double)]]()
     for (i <- 0 until numPartitions by numPartitionsPerGroup) {
-      var centersGrouped = Array[(Vector, Double)]()
-      for (j <- i until i + numPartitionsPerGroup if j < numPartitions) {
-        // Normalize potential of centers so that they are comparable
-        val centersFiltered = localCentersIndexed.filter ( _._1 == j )
-        centersGrouped ++= centersFiltered.map { case (_, c, d) =>
-          (c, d / centersFiltered.size)
-        }
+      val centersFiltered = localCentersIndexed.filter { case (j, _, _) =>
+        j < min(numPartitions, i + numPartitionsPerGroup) && j >= i
       }
-      centersPotential ::= centersGrouped
+      centersPotential ::= centersFiltered.map { case (_, c, d) =>
+        (c, d / centersFiltered.size)
+      }
+
+      //println("[ChiuLocal] No. of center for group " + i + ": " + centersFiltered.size)
     }
 
     // Apply global version to refine centers in every group and concatenate the results
     var centers = Array[Vector]()
-    val numPartitionsOld = numPartitions
-    numPartitions = sqrt(numPartitionsOld).toInt
+    val lowerBoundOld = lowerBound
+    val upperBoundOld = upperBound
+    val raOld = ra
+    val rbOld = rb
+    lowerBound = lowerBoundGlobal
+    upperBound = upperBoundGlobal
+    setRadius(raGlobal)
+    setRb(rbGlobal)
     for (cs <- centersPotential) {
+      var numPartitionsGlobal = cs.size / PARTITION_SIZE + 1
       centers ++= chiuGlobal(
-        sc.parallelize(cs.map ( _._1 ), numPartitions),
-        Option(sc.parallelize(cs, numPartitions))
+        sc.parallelize(cs.map ( _._1 ), numPartitionsGlobal).cache(),
+        Option(sc.parallelize(cs, numPartitionsGlobal))
       )
+
+      println("[ChiuI] Added centers for one partition.")
     }
-    numPartitions = numPartitionsOld
+    lowerBound = lowerBoundOld
+    upperBound = upperBoundOld
+    setRadius(raOld)
+    setRb(rbOld)
 
     centers
   }
@@ -277,7 +319,8 @@ class SubtractiveClustering(
     val pairs = data.cartesian(data)
     val potential = pairs.map { case (x, y) =>
       (x, exp(-alpha * Vectors.sqdist(x, y)))
-    }.reduceByKey ( _ + _ ).cache()
+    }.reduceByKey ( _ + _ )
+
     potential
   }
 
@@ -289,34 +332,49 @@ class SubtractiveClustering(
       val pot = xs.map ( y => exp(-alpha * Vectors.sqdist(x, y._2)) ).sum
       (x, pot)
     }
+
     potential
   }
 }
 
 /** Top-level Subtractive Clustering methods. */
 object SubtractiveClustering {
-
   /**
    * Construct a SubtractiveClustering model with specified parameters.
    *
-   * @param ra Neighbourhood radius.
+   * @param ra Neighbourhood radius for initial potential.
+   * @param rb Neighbourhood radius for decreasing potential.
    * @param lowerBound Lower bound for stopping condition.
    * @param upperBound Upper bound for stopping condition.
    * @param numPartitions Number of partitions for local and intermediate versions.
    * @param numPartitionsPerGroup Number of partition per group for intermediate version.
+   * @param raGlobal ra for global stage of intermediate version.
+   * @param rbGlobal rb for global stage of intermediate version.
+   * @param lowerBoundGlobal Lower bound for global stage of intermediate version.
+   * @param upperBoundGlobal Upper bound for global stage of intermediate version.
    */
   def apply(
     ra: Double,
+    rb: Double,
     lowerBound: Double,
     upperBound: Double,
     numPartitions: Int,
-    numPartitionsPerGroup: Int): SubtractiveClustering =
+    numPartitionsPerGroup: Int,
+    raGlobal: Double = 0.3,
+    rbGlobal: Double = 0.45,
+    lowerBoundGlobal: Double = 0.15,
+    upperBoundGlobal: Double = 0.5): SubtractiveClustering =
     new SubtractiveClustering(
       ra,
+      rb,
       lowerBound,
       upperBound,
       numPartitions,
-      numPartitionsPerGroup)
+      numPartitionsPerGroup,
+      raGlobal,
+      rbGlobal,
+      lowerBoundGlobal,
+      upperBoundGlobal)
 
   /** Construct a SubtractiveClustering model with default parameters. */
   def apply(numPartitions: Int): SubtractiveClustering =

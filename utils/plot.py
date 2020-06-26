@@ -30,8 +30,17 @@ def plot2D(*args):
     """Plot the given 2D data, specified as a numpy array."""
 
     plt.figure(figsize = (8, 8))
-    for data in args:
-        plt.scatter(data[:, 0], data[:, 1], alpha = 0.5, marker = '.')
+    plt.xlabel("x")
+    plt.ylabel("y")
+    x=np.linspace(-1, 1, 100)
+    y=np.sin(x)/x
+    plt.plot(x, y, linestyle = "--", label = "sin(x)/x")
+    colors = ['r', 'lime']
+    labels = ["Chiu", "WM"]
+    for i, data in enumerate(args):
+        plt.plot(data[:, 0], data[:, 1], c = colors[i], label = labels[i])
+    
+    plt.legend()
     plt.show()
 
 def main():
@@ -42,7 +51,20 @@ def main():
         sys.exit(1)
 
     data_lst = [np.genfromtxt(arg, delimiter = DELIM) for arg in sys.argv[1:]]
-    plot2D(*data_lst)
+    indices_lst = [np.argsort(data[:, 0]) for data in data_lst]
+    x1 = data_lst[0][:,0]
+    x1= x1[indices_lst[0]]
+    y1 = data_lst[0][:,1]
+    y1 = y1[indices_lst[0]]
+    a = np.array([[x, y] for x,y in zip(x1, y1)])
+
+    x2 = data_lst[1][:,0]
+    x2= x2[indices_lst[1]]
+    y2 = data_lst[1][:,1]
+    y2 = y2[indices_lst[1]]
+    b = np.array([[x, y] for x,y in zip(x2, y2)])
+
+    plot2D(a, b)
 
 if __name__ == "__main__":
     main()

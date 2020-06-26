@@ -23,9 +23,9 @@ https://www.gnu.org/licenses/gpl-3.0.html.
 import numpy as np
 import sys
 
-L = 1        # Normalize to interval [-L, L]
-DELIM = ','  # Dimension delimiter in input file
-LABELS = True
+L = 1             # Normalize to interval [-L, L]
+DELIM = ','       # Dimension delimiter in input file
+LABELS = True     # True if the last element of each row is the class label
 
 def print_data(data):
     """Print data in the same format as the input data."""
@@ -38,8 +38,8 @@ def print_data(data):
 
 def compute_range(data, ncols, labels):
     """ Compute min and max values in every dimension."""
-    
-    cols = ncols - 1 if labels else ncols   
+
+    cols = ncols - 1 if labels else ncols
     min_cols = [data[:, j].min() for j in range(cols)]
     max_cols = [data[:, j].max() for j in range(cols)]
 
@@ -61,7 +61,7 @@ def norm(data, nrows, ncols, range_cols, labels):
             for i in range(nrows):
                 data[i, j] = - L + ((data[i, j] - min) * (2 * L)) / (max - min)
 
-def denorm(data, nrows, ncols, range_colsi, labels):
+def denorm(data, nrows, ncols, range_cols, labels):
     """Denormalize data from [-L, L] to original values."""
 
     cols = ncols - 1 if labels else ncols
@@ -75,7 +75,7 @@ def denorm(data, nrows, ncols, range_colsi, labels):
 
 def main():
     """Main function."""
-    
+
     if (len(sys.argv) < 3):
         print("use: ./dproc.py [--norm, --denorm, --range] DATA [DATA_RANGE]")
         sys.exit(1)

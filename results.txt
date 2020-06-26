@@ -2,6 +2,10 @@ Num executors: 37
 Cores/executor: 5
 Memory/executor: 28 GB
 
+Para poder leer archivos de HDFS: export HADOOP_USER_NAME=hdfs
+
+time spark-submit --num-executors 37 --executor-cores 5 --executor-memory 28g --conf "spark.executor.extraJavaOptions=-XX:+UseG1GC" --conf spark.executor.memoryOverhead=4096 --conf spark.driver.memoryOverhead=8192 --conf spark.network.timeout=800000 target/scala-2.11/fuzzyspark-test-assembly-1.0.jar ~/fuzzyspark/testing/data/classification/magic/magic-5-1tra-norm.dat ~/fuzzyspark/testing/data/classification/magic/magic-5-1tst-norm.dat
+
 --- CHIU GLOBAL ---
 Data: 100000 points with 4 dimensions (test100000.csv)
 Initial partitions: 13
