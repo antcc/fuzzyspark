@@ -1,6 +1,3 @@
-logs/
-data/
-output/
 target/
 project/**
 !project/plugins.sbt

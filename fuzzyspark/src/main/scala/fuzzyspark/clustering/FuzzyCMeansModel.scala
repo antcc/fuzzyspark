@@ -19,54 +19,53 @@
 
 package fuzzyspark.clustering
 
-import org.apache.spark.mllib.linalg.Vector
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
 import org.apache.spark.rdd.RDD
 
 /** A clustering model for Fuzzy C Means. */
 class FuzzyCMeansModel(
   var clusterCenters: Array[Vector],
-  var m: Int,
-  var trainingLoss: Double,
+  var m: Double,
   var trainingIter: Int,
   var labels: Option[Array[Double]]
 ) extends Serializable {
 
-  /** Get centroid labels. */
-  def getLabels: Option[Array[Double]] = labels
-
-  /** Set centroids labels. */
-  def setLabels(labels: Array[Double]): this.type = {
-    this.labels = Option(labels)
-    this
-  }
-
   /** Number of cluster centers. */
   def c: Int = clusterCenters.length
 
-  /** Compute loss function using given data. */
+  /** Compute loss function for a given set of points. */
   def computeLoss(data: RDD[Vector]): Double = {
-    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
-    val u = membershipMatrix(data)
-    FuzzyCMeans.computeLoss(u, centersBroadcast.value, m)
+    FuzzyCMeans.computeLoss(data, clusterCenters, m)
   }
 
-  /** Compute fuzzy membership matrix for given data. */
-  private def membershipMatrix(data: RDD[Vector]) = {
-    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
-    // Label 0 as a placeholder
-    data.map ( x => ((x, 0.0), FuzzyCMeans.computeRow(x, centersBroadcast.value, m)) )
+  /** Compute fuzzy membership matrix for a given set of points. */
+  def membershipMatrix(data: RDD[Vector]): RowMatrix = {
+    val sc = data.sparkContext
+    val centersBc = sc.broadcast(clusterCenters)
+    val u = data.map ( x => Vectors.dense(FuzzyCMeans.computeMembershipRow(x, centersBc.value, m)) )
+
+    new RowMatrix(u)
   }
 
-  /**
-   * Predict point label
-   *
-   */
+  /** Compute labels for centroids based on a given set of points. */
+  def computeLabels(
+      labeledData: RDD[(Vector, Double)],
+      alpha: Double,
+      scaleAlpha: Boolean = true): Array[Double] = {
+    FuzzyCMeans.computeCentersLabels(
+      labeledData, clusterCenters,
+      m, alpha, scaleAlpha)
+  }
+
+  /** Predict point label. */
   def predict(x: Vector): Double = {
     require(
       labels.exists( _.size == clusterCenters.size ),
       s"Each cluster center must have a label.")
 
-    val index = FuzzyCMeans.computeRow(x, clusterCenters, m).argmax
+    val r = FuzzyCMeans.computeMembershipRow(x, clusterCenters, m)
+    val index = r.indexOf(r.max)
     labels.get(index)
   }
 
@@ -74,16 +73,12 @@ class FuzzyCMeansModel(
    * Predict labels for unseen data using FCM
    * membership function.
    */
-  def predictRDD(data: RDD[Vector]): RDD[(Vector, Double)] = {
+  def predictRDD(data: RDD[Vector]): RDD[Double] = {
     require(
       labels.exists( _.size == clusterCenters.size ),
       s"Each cluster center must have a label.")
 
-    val centersBroadcast = data.sparkContext.broadcast(clusterCenters)
-    data.map { x =>
-      val index = FuzzyCMeans.computeRow(x, centersBroadcast.value, m).argmax
-      (x, labels.get(index))
-    }
+    data.map ( x => predict(x) )
   }
 }
 
@@ -93,24 +88,21 @@ object FuzzyCMeansModel {
   /** Construct a FuzzyCMeansModel resulting from training. */
   def apply(
     clusterCenters: Array[Vector],
-    m: Int,
-    trainingLoss: Double,
+    m: Double,
     trainingIter: Int,
     labels: Option[Array[Double]] = None): FuzzyCMeansModel = {
-    new FuzzyCMeansModel(clusterCenters, m, trainingLoss, trainingIter, labels)
+    new FuzzyCMeansModel(clusterCenters, m, trainingIter, labels)
   }
 
   /**
    * Construct a FuzzyCMeansModel from given cluster centers and
-   * fuzziness degree. A value of 0 for trainingLoss and trainingIter
-   * means that the model training history is unknown.
+   * fuzziness degree. A value of 0 for trainingIter means that
+   * the model training history is unknown.
    */
   def apply(
     clusterCenters: Array[Vector],
-    m: Int,
+    m: Double,
     labels: Option[Array[Double]]): FuzzyCMeansModel = {
-    new FuzzyCMeansModel(clusterCenters, m, 0.0, 0, labels)
+    new FuzzyCMeansModel(clusterCenters, m, 0, labels)
   }
-
-  //TODO: load and save model
  }

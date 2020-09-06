@@ -38,33 +38,18 @@ private class WM(
   import WM._
 
   /**
-   * Compute the different regions in which the
-   * input-output space is divided.
-   *
-   * A region is defined by an interval (c, d), allowing both
-   * c and d to be infinite.
-   */
-  private def computeRegions(
-    numRegions: Array[Int],
-    limits: Array[(Double, Double)]): Array[Array[Double]] = {
-    numRegions.zipWithIndex.map { case (n, i) =>
-      val (a, b) = limits(i)
-      Array.tabulate(2 * n + 1)(j => a + j * ((b - a) / (2 * n)))
-    }
-  }
-
-  /**
    *  Find the regions with maximum membership for a given point, in a
    *  specified list of dimensions.
    */
   private def maxRegion(
-    z: Vector,
-    dimensionRegions: Array[Array[Double]],
-    dimensionLimits: Array[(Double, Double)]) = {
+      z: Vector,
+      dimensionRegions: Array[Array[Double]],
+      dimensionLimits: Array[(Double, Double)]) = {
+    val n = dimensionRegions.size
     var r = List[(Double, Double)]()
     var degree = 1.0
 
-    for (i <- 0 until dimensionRegions.size) {
+    for (i <- 0 until n) {
       // We have N points: a_0, a_1, ..., a_N-1
       var regions = dimensionRegions(i)
       var limits = dimensionLimits(i)
@@ -104,10 +89,10 @@ private class WM(
    * @note The RDD `data` should be cached for high performance.
    */
   def run(
-    data: RDD[(Vector, Vector)],
-    numRegions: Array[Int],
-    regionLimits: Array[(Double, Double)],
-    classification: Boolean = false): WMModel = {
+      data: RDD[(Vector, Vector)],
+      numRegions: Array[Int],
+      regionLimits: Array[(Double, Double)],
+      classification: Boolean = false): WMModel = {
     val sc = data.sparkContext
     val example = data.first()
     val (inputDims, outputDims) = (example._1.size, example._2.size)
@@ -129,18 +114,22 @@ private class WM(
 
     // Compute fuzzy rule base.
     // Every rule is represented by a collection of input and output regions
-    val ruleBase = data.map { case (x, y) =>
-      // Compute regions with maximum membership in each dimension
-      val (ri, degreeInput) = maxRegion(x, regionsInput, limitsInput)
-      val (ro, degreeOutput) = maxRegion(y, regionsOutput, limitsOutput)
+    val ruleBase = data.mapPartitions { iterator =>
+      for {
+        (x, y) <- iterator
+      } yield {
+        // Compute regions with maximum membership in each dimension
+        val (ri, degreeInput) = maxRegion(x, regionsInput, limitsInput)
+        val (ro, degreeOutput) = maxRegion(y, regionsOutput, limitsOutput)
 
-      // Compute rule degree
-      var degree = degreeInput * degreeOutput
+        // Compute rule degree
+        var degree = degreeInput * degreeOutput
 
-      // Factor in rule weight (currently RW = 1)
-      degree = degree * 1.0
+        // Factor in rule weight (currently RW = 1)
+        degree = degree * 1.0
 
-      (ri, (ro, degree))
+        (ri, (ro, degree))
+      }
     }.reduceByKey { case (r1, r2) =>
       if (r1._2 > r2._2) r1 else r2
     }.map { case (ri, (ro, _)) => (ri, ro) }.collect.toArray
@@ -165,19 +154,57 @@ object WM {
    * @param mfType Type of membership function to use.
    */
   def train(
-    data: RDD[(Vector, Vector)],
-    numRegions: Array[Int],
-    regionLimits: Array[(Double, Double)],
-    mfType: String = TRIANGULAR): WMModel = {
+      data: RDD[(Vector, Vector)],
+      numRegions: Array[Int],
+      regionLimits: Array[(Double, Double)],
+      mfType: String = TRIANGULAR): WMModel = {
     new WM(mfType).run(data, numRegions, regionLimits)
+  }
+
+  /**
+   * Compute the different regions in which the
+   * input-output space is divided.
+   *
+   * A region is defined by an interval (a, b) on the extended
+   * real line.
+   */
+  private[frbs] def computeRegions(
+    numRegions: Array[Int],
+    limits: Array[(Double, Double)]): Array[Array[Double]] = {
+    numRegions.zipWithIndex.map { case (n, i) =>
+      val (c, d) = limits(i)
+      Array.tabulate(2 * n + 1)(j => c + j * ((d - c) / (2 * n)))
+    }
+  }
+
+  private[frbs] def getGaussianParameters(
+      region: (Double, Double),
+      regionLimits: (Double, Double)) = {
+    val (a, b) = region
+    val (lower, upper) = regionLimits
+
+    // First region
+    if (a.isNegInfinity) {
+      (lower, (b - lower) / 3.0)
+    }
+
+    // Last region
+    else if (b.isPosInfinity) {
+      (upper, (upper - a) / 3.0)
+    }
+
+    // Middle regions
+    else {
+      ((a + b) / 2.0, (b - a) / 6.0)
+    }
   }
 
   /** Compute the membership value of a point to an interval. */
   private[frbs] def mf(
-    x: Double,
-    region: (Double, Double),
-    limits: (Double, Double),
-    mfType: String): Double = {
+      x: Double,
+      region: (Double, Double),
+      limits: (Double, Double),
+      mfType: String): Double = {
     require(
       mfType == TRIANGULAR || mfType == GAUSSIAN,
       "Membership function must be one of the allowed types."

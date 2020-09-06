@@ -76,7 +76,11 @@ class ModelIdentification(
       VectorUtils.multiply(outputSlice, mu)
     }.reduce ( VectorUtils.add )
 
-    VectorUtils.divide(z, membership.sum)
+    var mSum = membership.sum
+    if (mSum <= 0)
+      mSum = mSum + 1e4
+
+    VectorUtils.divide(z, mSum)
   }
 
   /**
@@ -105,7 +109,11 @@ class ModelIdentification(
         VectorUtils.multiply(outputSlice, mu)
       }.reduce ( VectorUtils.add )
 
-      z = VectorUtils.divide(z, membership.sum)
+      var mSum = membership.sum
+      if (mSum <= 0)
+        mSum = mSum + 1e4
+
+      z = VectorUtils.divide(z, mSum)
 
       // Form a pair (input, output)
       (y, z)

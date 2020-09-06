@@ -173,7 +173,6 @@ class SubtractiveClustering(
       }
 
       it = it + 1
-      //println("[ChiuGlobal] Added center #" + it + " with potential " + chosenPotential)
     }
 
     centers.toArray
@@ -272,8 +271,6 @@ class SubtractiveClustering(
       .collect()
       .toArray
 
-    //println("[ChiuLocal] Total no. of centers: " + localCentersIndexed.size)
-
     // Group centers every few partitions
     var centersPotential = List[Array[(Vector, Double)]]()
     for (i <- 0 until numPartitions by numPartitionsPerGroup) {
@@ -283,8 +280,6 @@ class SubtractiveClustering(
       centersPotential ::= centersFiltered.map { case (_, c, d) =>
         (c, d / centersFiltered.size)
       }
-
-      //println("[ChiuLocal] No. of center for group " + i + ": " + centersFiltered.size)
     }
 
     // Apply global version to refine centers in every group and concatenate the results
@@ -303,8 +298,6 @@ class SubtractiveClustering(
         sc.parallelize(cs.map ( _._1 ), numPartitionsGlobal).cache(),
         Option(sc.parallelize(cs, numPartitionsGlobal))
       )
-
-      println("[ChiuI] Added centers for one partition.")
     }
     lowerBound = lowerBoundOld
     upperBound = upperBoundOld

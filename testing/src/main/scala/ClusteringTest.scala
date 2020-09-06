@@ -67,33 +67,30 @@ object ClusteringTest {
 
   /** Train a Fuzzy C Means model. */
   def testFuzzyCMeans(
-    labeledData: RDD[(Vector, Double)],
+    data: RDD[Vector],
     numCenters: Int,
     initMode: String,
     chiuInstance: Option[SubtractiveClustering] = None): FuzzyCMeansModel = {
-    val fcmModel = FuzzyCMeans.train(
-      labeledData,
+    val fcmModel = FuzzyCMeans.fit(
+      data,
       initMode = initMode,
       c = numCenters,
       numPartitions = numPartitions,
-      chiuInstance = chiuInstance
+      chiuInstance = chiuInstance,
+      epsilon = 1e-4,
+      seed = seed
     )
 
     // Print results
     println("--> INIT MODE: " + initMode)
     println("--> NO. OF CENTERS: " + fcmModel.c)
-    println("--> LOSS: " + fcmModel.trainingLoss)
+    println("--> LOSS: " + fcmModel.computeLoss(data))
     println("--> NO. OF ITERATIONS: " + fcmModel.trainingIter)
     if (saveFile) {
       printToFile(outFile, centersToString(fcmModel.clusterCenters))
       println("--> SAVED CENTERS TO FILE " + outFile)
     }
-/**
-    else {
-      println("--> CLUSTER CENTERS:\n" +
-        fcmModel.clusterCenters.map ( _.toString ).mkString("\n") + "\n")
-    }
-*/
+
     fcmModel
   }
 
@@ -129,34 +126,51 @@ object ClusteringTest {
   def testFCMLabels(
     labeledTrainingData: RDD[(Vector, Double)],
     testData: RDD[(Vector, Double)],
-    numClasses: Int,
-    alpha: Double,
+    numCluster: Int,
+    alphas: Array[Double],
+    m: Double,
     initMode: String,
     chiuInstance: Option[SubtractiveClustering] = None) = {
-    val model = FuzzyCMeans.train(
+    val model = FuzzyCMeans.fitClassifier(
       labeledTrainingData,
       initMode = initMode,
-      c = numClasses,
-      alpha = alpha,
+      c = numCluster,
+      alpha = alphas(0),
+      m = m,
       numPartitions = numPartitions,
-      classification = true,
       chiuInstance = chiuInstance,
+      matrixNorm = FuzzyCMeans.MAX,
+      maxIter = 100,
+      epsilon = 1e-4,
       seed = seed)
 
-    // Prediction
-    val labelAndPreds = testData.map { case (x, l) =>
-      (l, model.predict(x))
+    for (i <- 0 until alphas.size) {
+      var testAcc = 0.0
+      timePartial {
+        // Recompute center labels
+        if (i > 0) {
+          model.labels = Option(model.computeLabels(labeledTrainingData, alphas(i)))
+        }
+
+        // Prediction
+        val labelAndPreds = testData.map { case (x, l) =>
+          (l, model.predict(x))
+        }
+
+        // Classification error
+        testAcc =
+          100.0 * labelAndPreds.filter ( r => r._1 == r._2 ).count.toDouble / testData.count()
+      }
+      val tag =
+        if (initMode == FuzzyCMeans.CHIU_INTERMEDIATE) "[FCM + ChiuI]" else "[FCM + Random]"
+
+      println(s"$tag Alpha = ${alphas(i)}, m = $m")
+      println(s"$tag No. of centers = ${model.c}")
+      println(s"$tag No. of iterations = ${model.trainingIter}")
+      println(f"$tag Test Loss = ${model.computeLoss(testData.keys)}%1.3f")
+      println(f"$tag Test Acc = $testAcc%1.3f%%\n")
+
     }
-
-    // Classification error
-    val ra = chiuInstance.getOrElse(SubtractiveClustering(numPartitions)).getRadius
-    val testAcc =
-      100.0 * labelAndPreds.filter ( r => r._1 == r._2 ).count.toDouble / testData.count()
-
-    if (initMode == FuzzyCMeans.CHIU_INTERMEDIATE)
-      println(f"--> FCM + ChiuI Test Acc = $testAcc%1.3f%%")
-    else
-      println(f"--> FCM + Random (c = $numClasses) Test Acc = $testAcc%1.3f%%")
   }
 
 /** Test KMeans-based classification algorithm. */
@@ -179,8 +193,8 @@ object ClusteringTest {
       ((l, model.predict(x)), 1)
     }.reduceByKey ( _ + _ )
 
-    for (i <- 0 until c) {
-      labels(i) = labelsCount.filter ( _._1._2 == i )
+    for (j <- 0 until c) {
+      labels(j) = labelsCount.filter ( _._1._2 == j )
         .max()(Ordering[Int].on ( _._2 ))._1._1
     }
 
@@ -257,7 +271,17 @@ object ClusteringTest {
     val result = block
     val t1 = System.nanoTime()
     val time = (t1 - t0) / (60.0 * 1e9)
-    println(f"Elapsed time: $time%1.2f min\n")
+    println(f"Total elapsed time: $time%1.2f min\n")
+    result
+  }
+
+  /** Measure execution time of a small block. */
+  def timePartial[R](block: => R): R = {
+    val t0 = System.nanoTime()
+    val result = block
+    val t1 = System.nanoTime()
+    val time = (t1 - t0) / (60.0 * 1e9)
+    println(f"Elapsed time: $time%1.2f min")
     result
   }
 
@@ -303,18 +327,16 @@ object ClusteringTest {
       (scaler.transform(features), label)
     }
 
-    val numClasses = 5
-    val numCluster = 5
-    val alphaCut = 0.2
+    val numClasses = 2
     val maxDepth = 10
 
     val ra = 1.5
-    val rb = 2.0
+    val rb = 3.0
     val raGlobal = 1.5
-    val rbGlobal = 2.0
+    val rbGlobal = 3.0
     val lb = 0.15
     val ub = 0.5
-    val lbGlobal = 0.3
+    val lbGlobal = 0.45
     val ubGlobal = 0.5
     val raModel = 1.5
 
@@ -327,7 +349,7 @@ object ClusteringTest {
     time { testRandomForestLabels(labeledTrainingData, testData, numClasses, maxDepth) }
     time { testLogisticLabels(labeledTrainingData, testData, numClasses) }
 
-    val ks = Array(300)
+    val ks = Array(250, 500, 1000)
     for (k <- ks) {
       time { testKMeansLabels(labeledTrainingData, testData, k) }
     }
@@ -336,16 +358,21 @@ object ClusteringTest {
       testModelIdentificationLabels(labeledTrainingData, testData, chiu, raModel)
     }
 
-    time {
-      testFCMLabels(labeledTrainingData, testData, numCluster, alphaCut,
-        FuzzyCMeans.RANDOM, None) }
+    var alphas = Array(0.2, 0.4, 0.6, 0.8)
+    var ms = Array(1.25, 1.5, 1.75, 2.0, 2.25, 2.5)
 
-    time {
-      testFCMLabels(labeledTrainingData, testData, numClasses, alphaCut,
-        FuzzyCMeans.CHIU_INTERMEDIATE, Option(chiu))
+    for (m <- ms) {
+      time {
+        testFCMLabels(labeledTrainingData, testData, 250, alphas, m,
+          FuzzyCMeans.RANDOM, None) }
     }
 
-    // Stop spark
+    for (m <- ms) {
+      time {
+        testFCMLabels(labeledTrainingData, testData, 500, alphas, m,
+          FuzzyCMeans.RANDOM, None) }
+    }
+
     sc.stop()
   }
 }

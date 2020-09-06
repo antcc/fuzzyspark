@@ -66,7 +66,11 @@ class WMModel(
         => mu * regionCenter(ro(j), limitsOutput(j))
       }.reduce ( _ + _ )
 
-      y(j) = yy / outputDegree.map ( _._2 ).sum
+      var outSum = outputDegree.map ( _._2 ).sum
+      if (outSum <= 0)
+        outSum = outSum + 1e4
+
+      y(j) = yy / outSum
     }
 
     Vectors.dense(y)
@@ -92,6 +96,4 @@ object WMModel {
     mfType: String): WMModel = {
     new WMModel(ruleBase, limitsInput, limitsOutput, mfType)
   }
-
-  //TODO: load and save model
  }
