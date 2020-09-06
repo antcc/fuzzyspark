@@ -137,7 +137,7 @@ object ModelTest {
     println(f"--> RandomForest (# = 200) Test MSE = $testMSE%1.3f%%")
   }
 
-  /** Test SVM classification algorithm. */
+  /** Test Linear regression algorithm. */
   def testLinearRegression(
     labeledTrainingData: RDD[(Vector, Vector)],
     testData: RDD[(Vector, Vector)]) = {
@@ -169,7 +169,7 @@ object ModelTest {
     result
   }
 
-  /** Model Identification examples with fuzzyspark. */
+  /** Fuzzy regression examples with fuzzyspark. */
   def main(args: Array[String]) = {
     // Spark environment configuration
     val conf = new SparkConf().setAppName("ModelTest")
@@ -213,6 +213,8 @@ object ModelTest {
        Vectors.dense(x.toArray.slice(inputDims, x.size)))
     }.cache()
 
+    // Set parameters for the executions
+
     val ra = 1.0
     val rb = 1.5
     val raGlobal = 1.0
@@ -230,6 +232,7 @@ object ModelTest {
         raGlobal, rbGlobal, lbGlobal, ubGlobal)
 
     // Test model identification functions
+    
     time { testRandomForest(trainingData, testData, 15) }
     time { testLinearRegression(trainingData, testData) }
 

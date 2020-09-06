@@ -43,7 +43,8 @@ class FuzzyCMeansModel(
   def membershipMatrix(data: RDD[Vector]): RowMatrix = {
     val sc = data.sparkContext
     val centersBc = sc.broadcast(clusterCenters)
-    val u = data.map ( x => Vectors.dense(FuzzyCMeans.computeMembershipRow(x, centersBc.value, m)) )
+    val u = data.map { x =>
+      Vectors.dense(FuzzyCMeans.computeMembershipRow(x, centersBc.value, m)) }
 
     new RowMatrix(u)
   }

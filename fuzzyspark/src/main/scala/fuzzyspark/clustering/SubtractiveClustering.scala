@@ -120,6 +120,7 @@ class SubtractiveClustering(
           exp(-beta * Vectors.sqdist(x, chosenCenter)))
       }.cache()
 
+      // Delete lineage every 30 iterations
       if (it % 30 == 0) {
         potential.checkpoint()
         potential.count()
@@ -277,6 +278,7 @@ class SubtractiveClustering(
       val centersFiltered = localCentersIndexed.filter { case (j, _, _) =>
         j < min(numPartitions, i + numPartitionsPerGroup) && j >= i
       }
+      // Normalize potential of points
       centersPotential ::= centersFiltered.map { case (_, c, d) =>
         (c, d / centersFiltered.size)
       }

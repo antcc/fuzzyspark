@@ -240,7 +240,7 @@ object ClusteringTest {
     println(f"--> RandomForest (# = 200) Test Acc = $testAcc%1.3f%%")
   }
 
-  /** Test SVM classification algorithm. */
+  /** Test Logistic Regression classification algorithm. */
   def testLogisticLabels(
     labeledTrainingData: RDD[(Vector, Double)],
     testData: RDD[(Vector, Double)],
@@ -327,6 +327,7 @@ object ClusteringTest {
       (scaler.transform(features), label)
     }
 
+    // Set parameters for the executions
     val numClasses = 2
     val maxDepth = 10
 
@@ -345,6 +346,8 @@ object ClusteringTest {
         ra, rb, lb, ub, numPartitions,
         numPartitionsPerGroup,
         raGlobal, rbGlobal, lbGlobal, ubGlobal)
+
+    // Run algorithms
 
     time { testRandomForestLabels(labeledTrainingData, testData, numClasses, maxDepth) }
     time { testLogisticLabels(labeledTrainingData, testData, numClasses) }

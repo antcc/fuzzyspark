@@ -141,7 +141,7 @@ private class WM(
 /** Top-level methods for calling Wang-Mendel algorithm. */
 object WM {
 
-  /** Possinle MF names */
+  /** Possible MF names */
   val TRIANGULAR = "Triangular"
   val GAUSSIAN = "Gaussian"
 
@@ -177,6 +177,10 @@ object WM {
     }
   }
 
+  /**
+   * Get the parameters of a Gaussian function on the
+   * specified region.
+   */
   private[frbs] def getGaussianParameters(
       region: (Double, Double),
       regionLimits: (Double, Double)) = {
